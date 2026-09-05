@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import weakref
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -21,8 +22,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--allocator-gib', type=float, choices=(3.5, 4.0), default=3.5,
                         help='3.5 leaves room for CUDA overhead; 4.0 tests the full 4 GiB allocator ceiling.')
-    parser.add_argument('--serial-decode', action='store_true',
-                        help='Experiment: keep generation batched but decode each audio separately.')
+    parser.add_argument('--check-cleanup', action='store_true',
+                        help='Also verify cleanup-model unloading before speech generation.')
     parser.add_argument('files', nargs='+')
     args = parser.parse_args()
     files = [str(Path(name).resolve()) for name in args.files]
@@ -72,34 +73,21 @@ def main():
             loads += 1
             super().__init__(config)
             assert self.model.model.device.type == 'cuda'
-            # Deliberately override the app's hardware-based batch choice.
-            self.batch_size = 6
+            assert self.batch_size == 6
             self.weight_address = next(self.model.model.parameters()).data_ptr()
-            if args.serial_decode:
-                tokenizer = self.model.model.speech_tokenizer
-                decode = tokenizer.decode
-
-                def serial_decode(codes):
-                    waves, rates = [], set()
-                    for code in codes:
-                        audio, rate = decode([code])
-                        waves.extend(audio)
-                        rates.add(rate)
-                    assert len(rates) == 1
-                    return waves, rates.pop()
-
-                tokenizer.decode = serial_decode
+            self.generating = False
 
         def speak_batch(self, passages):
-            # Test six truly simultaneous passages, without the production
-            # wrapper's OOM recovery silently halving the batch.
+            # Exercise production code but fail if its OOM/cap fallback recurses.
+            assert not self.generating, 'Batch reduction is forbidden in this test.'
             assert next(self.model.model.parameters()).data_ptr() == self.weight_address
-            waves, rate = self.model.generate_voice_clone(
-                text=[p['text'].strip() for p in passages],
-                language=[p['language'] for p in passages],
-                voice_clone_prompt=self.prompt, max_new_tokens=2048)
-            assert len(waves) == len(passages)
-            return [(self.finish_wave(wave, rate), rate) for wave in waves]
+            self.generating = True
+            try:
+                result = super().speak_batch(passages)
+                assert self.batch_size == 6
+                return result
+            finally:
+                self.generating = False
 
         def speak(self, *args, **kwargs):
             assert next(self.model.model.parameters()).data_ptr() == self.weight_address
@@ -116,13 +104,24 @@ def main():
     thread = threading.Thread(target=monitor, daemon=True)
     thread.start()
     try:
+        if args.check_cleanup:
+            cleaner = worker.Cleaner(config)
+            model = weakref.ref(cleaner.model)
+            assert cleaner.clean('This is a test of document narration. Keep the original language.',
+                                 lambda *_: None, 'English').strip()
+            cleaner.close()
+            del cleaner
+            worker.release_gpu()
+            assert model() is None, 'Cleanup weights are still referenced.'
+            assert torch.cuda.memory_allocated() < 64 * 2**20
+            emit('cleanup_unloaded')
         with patch('worker.Speaker', CheckedSpeaker):
             worker.run_batch(config, files, emit)
     finally:
         stop.set()
         thread.join(timeout=6)
         report = dict(model=config['tts'], files=files, model_loads=loads, batch_size=6,
-                      serial_decode=args.serial_decode,
+                      serial_decode=True, cleanup_checked=args.check_cleanup,
                       allocator_limit_MiB=budget / 2**20,
                       peak_allocated_MiB=torch.cuda.max_memory_allocated() / 2**20,
                       peak_reserved_MiB=torch.cuda.max_memory_reserved() / 2**20,
@@ -135,6 +134,7 @@ def main():
     assert max(samples) <= 4096, report
     assert report['peak_reserved_MiB'] <= budget / 2**20, report
     assert events[-1]['completed'] == len(files) and events[-1]['failed'] == 0, report
+    assert events[-1]['allocated_MiB'] < 64, 'Speech weights were not unloaded.'
     assert all(valid_audio(e['audio']) for e in events if e['event'] == 'done')
     print('4 GiB budget test passed; all final audio files verified.', flush=True)
 

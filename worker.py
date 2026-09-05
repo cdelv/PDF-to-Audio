@@ -9,13 +9,14 @@ import signal
 import sys
 import tempfile
 import traceback
+import weakref
 
 # Isolated Python ignores user site-packages, PYTHONPATH, and the working
 # directory. Only this app's own modules are added to its private runtime.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core import BOUNDARY, ROOT, SUPPORTED, cleanup_chunks, omit_tables, plain_text, speech_plan, split_text
 from languages import check_cleanup_language, detect_language, resolve_language
-from hardware import MODEL_VRAM
+from hardware import MODEL_VRAM, speech_batch_size
 from model_store import local_model
 from checkpoints import atomic_json, digest, open_job, valid_audio
 
@@ -68,6 +69,9 @@ class Cleaner:
         self.prompt = Path(config["prompt"]).read_text(encoding="utf-8").strip()
         if not self.prompt:
             raise ValueError("The cleanup prompt is empty. Edit it in Settings.")
+
+    def close(self):
+        self.model = self.tokenizer = None
 
     def clean(self, text, progress, language="Auto", checkpoint=None):
         pieces = cleanup_chunks(omit_tables(text))
@@ -142,6 +146,25 @@ class Cleaner:
             return plain_text(re.sub(r"(?<!\n)\n(?!\n)", " ", repaired))
 
 
+def serial_audio_decoder(tokenizer):
+    # Do not create tokenizer -> wrapper -> bound method -> tokenizer cycles.
+    decode = weakref.WeakMethod(tokenizer.decode)
+
+    def decode_serial(codes):
+        waves, sample_rate = [], None
+        for code in codes:
+            audio, rate = decode()([code])
+            if len(audio) != 1 or (sample_rate is not None and rate != sample_rate):
+                raise ValueError('Decoded speech passages have incompatible audio outputs.')
+            waves.extend(audio)
+            sample_rate = rate
+        if sample_rate is None:
+            raise ValueError('There are no speech tokens to decode.')
+        return waves, sample_rate
+
+    return decode_serial
+
+
 class Speaker:
     def __init__(self, config):
         import numpy as np
@@ -160,13 +183,13 @@ class Speaker:
             audio = audio.mean(axis=1)
         self.model = Qwen3TTSModel.from_pretrained(local_model(config["tts"]), **model_options(config, config["tts"]))
         self.prompt = self.model.create_voice_clone_prompt(ref_audio=(audio, rate), ref_text=transcript)
+        tokenizer = self.model.model.speech_tokenizer
+        tokenizer.decode = serial_audio_decoder(tokenizer)
         self.batch_size = 1
         import torch
         if self.model.model.device.type == 'cuda':
             free, total = torch.cuda.mem_get_info()
-            # Keep the 4 GB path sequential; larger cards can share generation
-            # overhead across passages. OOM halves the batch automatically.
-            self.batch_size = 6 if total >= 10 * 2**30 and free >= 3 * 2**30 else 2 if total >= 6 * 2**30 and free >= 2 * 2**30 else 1
+            self.batch_size = speech_batch_size(config['tts'], free, total)
         requested = int(config.get('batch_size', 0))
         if requested:
             self.batch_size = min(self.batch_size, max(1, requested))
@@ -174,15 +197,18 @@ class Speaker:
         # only a target-text language argument, never a separate reference tag.
         # The public audio API discards token counts. Check the underlying result
         # before decoding, so hitting a generation cap cannot silently truncate speech.
-        generate = self.model.model.generate
+        generate = weakref.WeakMethod(self.model.model.generate)
 
         def checked_generate(*args, **kwargs):
-            result = generate(*args, **kwargs)
+            result = generate()(*args, **kwargs)
             if any(len(codes) >= kwargs["max_new_tokens"] - 1 for codes in result[0]):
                 raise ValueError("Speech reached its generation limit. Shorten the sentence and retry.")
             return result
 
         self.model.model.generate = checked_generate
+
+    def close(self):
+        self.prompt = self.model = None
 
     def speak(self, text, language="Auto"):
         import numpy as np
@@ -335,6 +361,8 @@ def _run_batch(config, files, emit, resume, locks):
                 emit("error", index=index, message=str(error), folder=str(folder) if folder else "")
                 traceback.print_exc(file=sys.stderr)
     finally:
+        if cleaner is not None:
+            cleaner.close()
         del cleaner
         release_gpu()
     speaker = None
@@ -365,6 +393,10 @@ def _run_batch(config, files, emit, resume, locks):
                         temporary.replace(path)
                         done += 1
                     pending = pending[len(numbers):]
+                    del rendered, wave
+                    # Keep the weights/voice prompt; return unused batch working
+                    # memory to the driver instead of retaining a growing pool.
+                    release_gpu()
                 emit("progress", index=index, fraction=0.96, message="Joining audio")
                 target = folder / "audio.flac"
                 stitch(paths, target)
@@ -379,6 +411,8 @@ def _run_batch(config, files, emit, resume, locks):
                 emit("error", index=index, message=str(error), folder=str(folder))
                 traceback.print_exc(file=sys.stderr)
     finally:
+        if speaker is not None:
+            speaker.close()
         del speaker
         release_gpu()
     emit("finished", completed=completed, failed=failed)

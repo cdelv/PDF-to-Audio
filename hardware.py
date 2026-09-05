@@ -12,6 +12,14 @@ MODEL_VRAM = {
 }
 
 
+def speech_batch_size(model, free, total):
+    """Post-load CUDA headroom; audio decoding is always one passage at a time."""
+    gib = 2**30
+    if model == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base' and total >= 3.5 * gib and free >= gib:
+        return 6
+    return 6 if total >= 10 * gib and free >= 3 * gib else 2 if total >= 6 * gib and free >= 2 * gib else 1
+
+
 def gpu_memory():
     """Return the first NVIDIA GPU's total GiB, or None if unavailable."""
     try:
