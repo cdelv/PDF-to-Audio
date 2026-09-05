@@ -1,4 +1,4 @@
-"""Check live light/dark switching and language settings without changing the desktop."""
+"""Check the shared Qt interface, both palettes, and independent settings."""
 import os
 from pathlib import Path
 import sys
@@ -13,99 +13,67 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         os.environ['XDG_DATA_HOME'] = directory + '/data'
         os.environ['XDG_CONFIG_HOME'] = directory + '/config'
-        from app import App, Adw, GLib, Gtk, ROOT
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        import core
+        core.DATA = Path(directory) / 'data'
+        core.CONFIG = Path(directory) / 'config/settings.json'
+        from app import App, DesktopApplication, QPalette, QColor, Qt, ROOT, combo_value
         from core import load_settings
-        app = App()
-        app.set_application_id('io.github.pdftoaudio.AppearanceTest')
-        app.register(None)
-        app.activate()
-        gpu_probe = patch('app.gpu_memory', return_value=4.0)
-        gpu_probe.start()
-        app.settings()
-        context = GLib.MainContext.default()
+        application = DesktopApplication([])
+        window = App()
+        window.show()
 
-        def pump(seconds=0.3):
+        def pump(seconds=0.2):
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:
-                while context.pending():
-                    context.iteration(False)
+                application.processEvents()
                 time.sleep(0.01)
 
-        def walk(widget):
-            yield widget
-            child = widget.get_first_child()
-            while child:
-                yield from walk(child)
-                child = child.get_next_sibling()
-
-        pump()
-        gpu_probe.stop()
-        windows = Gtk.Window.get_toplevels()
-        dialog = next(windows.get_item(i) for i in range(windows.get_n_items())
-                      if windows.get_item(i).get_title() == 'Voice & settings')
-        notebook = next(w for w in walk(dialog) if isinstance(w, Gtk.Notebook))
-        assert not any(isinstance(w, Gtk.Entry) and '.venv/bin/python' in w.get_text()
-                       for w in walk(dialog))
-        assert not any(isinstance(w, Gtk.Label) and 'Python environment' in w.get_text()
-                       for w in walk(dialog))
-        output = ROOT/'test-output/appearance'
+        with patch('app.gpu_memory', return_value=4.0):
+            window.settings()
+            pump()
+        dialog = window.settings_dialog
+        assert [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())] == ['Voice', 'Languages', 'Cleanup prompt', 'Models']
+        output = ROOT / 'test-output/appearance'
         output.mkdir(parents=True, exist_ok=True)
-        manager = app.get_style_manager()
-        assert manager.get_color_scheme() == Adw.ColorScheme.DEFAULT
-
-        def capture(window, path):
-            paintable = Gtk.WidgetPaintable.new(window)
-            snapshot = Gtk.Snapshot.new()
-            paintable.snapshot(snapshot, window.get_width(), window.get_height())
-            texture = window.get_renderer().render_texture(snapshot.to_node(), None)
-            texture.save_to_png(str(path))
-
-        colors = []
-        for name, scheme, dark in [('light', Adw.ColorScheme.FORCE_LIGHT, False),
-                                    ('dark', Adw.ColorScheme.FORCE_DARK, True)]:
-            manager.set_color_scheme(scheme)
-            notebook.set_current_page(0)
+        for name, dark in [('light', False), ('dark', True)]:
+            palette = application.style().standardPalette()
+            for role in (QPalette.ColorRole.Window, QPalette.ColorRole.Button, QPalette.ColorRole.Base):
+                palette.setColor(role, QColor('#282828' if dark else '#fafafa'))
+            for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
+                palette.setColor(role, QColor('#eeeeee' if dark else '#222222'))
+            application.setPalette(palette)
             pump()
-            assert manager.get_dark() == dark
-            found, color = app.window.get_style_context().lookup_color('window_bg_color')
-            assert found
-            colors.append(color.red + color.green + color.blue)
-            capture(app.window, output/(name+'-window.png'))
-            capture(dialog, output/(name+'-voice.png'))
-            notebook.set_current_page(1)
+            dialog.tabs.setCurrentIndex(3)
             pump()
-            capture(dialog, output/(name+'-languages.png'))
-            notebook.set_current_page(3)
-            pump()
-            model_choices = [w for w in walk(notebook.get_nth_page(3)) if isinstance(w, Gtk.ComboBoxText)]
-            tts, llm, processor = model_choices
-            assert '~3 GiB VRAM' in tts.get_active_text()
-            assert '~5 GiB VRAM' in llm.get_active_text()
-            assert 'exceeds GPU' in llm.get_active_text()
-            assert llm.get_child().has_css_class('error')
-            assert not tts.get_child().has_css_class('error')
-            capture(dialog, output/(name+'-models-4gb.png'))
-            llm.set_active_id('Qwen/Qwen3-0.6B')
-            assert not llm.get_child().has_css_class('error')
-            llm.set_active_id('Qwen/Qwen3-1.7B')
-        assert colors[0] > colors[1] + 1, colors
-        choices = [w for w in walk(notebook.get_nth_page(1)) if isinstance(w, Gtk.ComboBoxText)]
-        assert len(choices) == 2
-        choices[0].set_active_id('Auto')
-        choices[1].set_active_id('English')
-        save = next(w for w in walk(dialog) if isinstance(w, Gtk.Button) and w.get_label() == 'Save settings')
-        save.emit('clicked')
+            llm, tts = dialog.fields['llm'], dialog.fields['tts']
+            assert '~5 GiB VRAM' in llm.currentText()
+            assert 'exceeds GPU' in llm.currentText()
+            assert '~3 GiB VRAM' in tts.currentText()
+            red = llm.itemData(llm.findData('Qwen/Qwen3-1.7B'), Qt.ItemDataRole.ForegroundRole)
+            assert red is not None and red.color().red() > red.color().green()
+            assert llm.lineEdit().palette().color(QPalette.ColorRole.Text) == red.color()
+            assert combo_value(llm) == 'Qwen/Qwen3-1.7B'
+            assert window.grab().save(str(output / f'qt-{name}-window.png'))
+            assert dialog.grab().save(str(output / f'qt-{name}-models-4gb.png'))
+            llm.setCurrentIndex(llm.findData('Qwen/Qwen3-0.6B'))
+            assert llm.lineEdit().palette().color(QPalette.ColorRole.Text) == palette.color(QPalette.ColorRole.Text)
+            llm.setCurrentIndex(llm.findData('Qwen/Qwen3-1.7B'))
+        dialog.language_fields['document_language'].setCurrentIndex(0)
+        voice = dialog.language_fields['voice_language']
+        voice.setCurrentIndex(voice.findData('English'))
+        dialog.save()
         pump()
         config = load_settings()
         assert config['document_language'] == 'Auto'
         assert config['voice_language'] == 'English'
         assert config['llm'] == 'Qwen/Qwen3-1.7B'
         assert config['tts'] == 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
-        assert config == app.config
-        manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
-        app.window.destroy()
-        app.quit()
-        print('Live light/dark themes and independent language settings passed.')
+        assert config == window.config
+        assert 'python' not in config
+        window.close()
+        application.quit()
+        print('Qt light/dark palettes, VRAM colors, model IDs, and language persistence passed.')
 
 
 if __name__ == '__main__':

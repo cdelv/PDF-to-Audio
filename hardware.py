@@ -1,6 +1,7 @@
 """Conservative single-document VRAM estimates; no inference imports in the GUI."""
 import subprocess
 import ctypes
+import sys
 
 # Includes weights, short-context generation, and a working-memory margin.
 MODEL_VRAM = {
@@ -21,7 +22,7 @@ def gpu_memory():
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         # Flatpak exposes the driver library, but not always nvidia-smi.
         try:
-            cuda = ctypes.CDLL('libcuda.so.1')
+            cuda = ctypes.CDLL('nvcuda.dll' if sys.platform == 'win32' else 'libcuda.so.1')
             cuda.cuInit.argtypes = [ctypes.c_uint]
             cuda.cuDeviceGet.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
             cuda.cuDeviceTotalMem_v2.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.c_int]

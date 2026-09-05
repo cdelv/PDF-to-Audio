@@ -1,9 +1,7 @@
-# GTK 4 + libadwaita + PyGObject come from the Linux distribution, for the GUI.
-# These packages run in the separate inference environment.
+# Shared desktop and inference dependencies for Linux, Windows, and macOS.
+PySide6-Essentials==6.10.2
 qwen-tts==0.1.1
 markitdown[pdf]==0.1.7
 langdetect==1.0.9
-# Match the tested CUDA 12.8 wheels; the NVIDIA host driver is separate.
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.11.0+cu128
-torchaudio==2.11.0+cu128
+torch==2.11.0
+torchaudio==2.11.0

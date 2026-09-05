@@ -3,11 +3,23 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from unittest.mock import Mock
+from types import SimpleNamespace
 
 import core
 
 
 class TextTests(unittest.TestCase):
+    def test_cleanup_can_split_malformed_pdf_without_losing_text(self):
+        for text in ('word ' * 1000, 'x' * 5000, 'Author A, Author B,\n' * 500):
+            chunks = core.cleanup_chunks(text)
+            self.assertEqual(''.join(chunks), text)
+            self.assertTrue(all(len(chunk) <= 2000 for chunk in chunks))
+
+    def test_markdown_hard_breaks_remain_speech_boundaries(self):
+        text = 'Long author list  \nAnother author list  \nLast authors'
+        self.assertEqual(core.plain_text(text), 'Long author list\n\nAnother author list\n\nLast authors')
+
     def test_tables_omit_data_but_keep_captions(self):
         source = ('Figure 1. Setup.\n\nTable 1. Results.\n\n'
                   '| Method | Score |\n| --- | ---: |\n| Zebra | 98765 |\n\n'
@@ -90,6 +102,41 @@ class HardwareTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_speech_cap_retries_without_accepting_truncation(self):
+        import numpy as np
+        from worker import Speaker
+        speaker = Speaker.__new__(Speaker)
+        speaker.prompt = 'reference'
+        wave = np.ones(2400, dtype=np.float32)
+        generate = Mock(side_effect=[ValueError('Speech reached its generation limit.'),
+                                     ValueError('Speech reached its generation limit.'),
+                                     ([wave.copy()], 24000), ([wave.copy()], 24000)])
+        speaker.model = SimpleNamespace(generate_voice_clone=generate)
+        text = 'The first sentence is complete. The second sentence is complete.'
+        output, rate = speaker.speak(text, 'English')
+        self.assertEqual(len(output), 4800)
+        self.assertEqual(rate, 24000)
+        texts = [call.kwargs['text'] for call in generate.call_args_list[2:]]
+        self.assertEqual(' '.join(texts), text)
+
+    def test_failed_cleanup_keeps_source_with_a_warning(self):
+        import torch
+        from transformers import BatchEncoding
+        from worker import Cleaner
+        tokenizer = Mock()
+        tokenizer.apply_chat_template.return_value = 'chat'
+        tokenizer.encode.return_value = [1, 2]
+        tokenizer.return_value = BatchEncoding({'input_ids': torch.tensor([[1]])})
+        tokenizer.decode.return_value = 'Esta es una historia sobre una biblioteca. Cada libro nos invita a descubrir nuevas ideas y aventuras.'
+        cleaner = Cleaner.__new__(Cleaner)
+        cleaner.tokenizer = tokenizer
+        cleaner.prompt = 'Preserve original language.'
+        cleaner.model = SimpleNamespace(device='cpu', config=SimpleNamespace(max_position_embeddings=40960),
+            generation_config=SimpleNamespace(eos_token_id=0), generate=Mock(return_value=torch.tensor([[1, 2, 0]])))
+        source = 'The source must remain in its original language.'
+        self.assertEqual(cleaner.clean(source, lambda *_: None, 'English'), source)
+        self.assertEqual(len(cleaner.warnings), 1)
+
     def test_stitch_preserves_samples_and_order(self):
         import numpy as np
         import soundfile as sf

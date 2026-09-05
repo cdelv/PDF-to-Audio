@@ -13,7 +13,7 @@ import traceback
 # Isolated Python ignores user site-packages, PYTHONPATH, and the working
 # directory. Only this app's own modules are added to its private runtime.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from core import ROOT, SUPPORTED, cleanup_chunks, omit_tables, plain_text, speech_plan, split_text
+from core import BOUNDARY, ROOT, SUPPORTED, cleanup_chunks, omit_tables, plain_text, speech_plan, split_text
 from languages import check_cleanup_language, detect_language, resolve_language
 from hardware import MODEL_VRAM
 
@@ -175,8 +175,27 @@ class Speaker:
 
     def speak(self, text, language="Auto"):
         import numpy as np
-        waves, rate = self.model.generate_voice_clone(text=text.strip(), language=language,
-            voice_clone_prompt=self.prompt, max_new_tokens=2048)
+        # A sampled generation can loop even on an otherwise valid passage.
+        # Retry once, then use smaller complete sentences; never accept a cap.
+        for attempt in range(2):
+            try:
+                waves, rate = self.model.generate_voice_clone(text=text.strip(), language=language,
+                    voice_clone_prompt=self.prompt, max_new_tokens=2048)
+                break
+            except ValueError as error:
+                if "generation limit" not in str(error):
+                    raise
+        else:
+            ends = [m.end() for m in BOUNDARY.finditer(text) if text[:m.end()].strip() and text[m.end():].strip()]
+            if not ends:
+                raise ValueError("Speech repeatedly reached its generation limit on one long sentence. "
+                                 "Add a paragraph break or simplify the sentence and retry.") from None
+            end = min(ends, key=lambda point: abs(point - len(text) / 2))
+            pieces = [text[:end], text[end:]]
+            rendered = [self.speak(piece, language) for piece in pieces if piece.strip()]
+            if len({rate for _, rate in rendered}) != 1:
+                raise ValueError("Retried speech passages have incompatible sample rates.")
+            return np.concatenate([wave for wave, _ in rendered]), rendered[0][1]
         wave = np.asarray(waves[0], dtype=np.float32)
         if len(wave) == 0 or not np.isfinite(wave).all() or np.max(np.abs(wave)) < 0.0001:
             raise ValueError("The speech model produced empty, silent, or invalid audio.")

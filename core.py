@@ -4,13 +4,27 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 from html.parser import HTMLParser
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 APP_ID = "io.github.pdftoaudio.Desktop"
-RUNTIME = ROOT / ".venv/bin/python"
-DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "pdf-to-audio"
-CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pdf-to-audio/settings.json"
+RUNTIME = Path(sys.executable) if getattr(sys, 'frozen', False) else ROOT / ('.venv/Scripts/python.exe' if sys.platform == 'win32' else '.venv/bin/python')
+if sys.platform == 'win32':
+    DATA = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) / 'PDF to Audio'
+    CONFIG = DATA / 'settings.json'
+elif sys.platform == 'darwin':
+    DATA = Path.home() / 'Library/Application Support/PDF to Audio'
+    CONFIG = DATA / 'settings.json'
+else:
+    DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "pdf-to-audio"
+    CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pdf-to-audio/settings.json"
+
+
+def worker_command():
+    if getattr(sys, 'frozen', False):
+        return [str(RUNTIME), '--worker']
+    return [str(RUNTIME), '-I', '-u', str(ROOT / 'worker.py')]
 TEXT_TYPES = {".txt", ".md", ".markdown", ".rst", ".log", ".csv"}
 SUPPORTED = TEXT_TYPES | {".pdf"}
 LANGUAGES = ["English", "Chinese", "French", "German", "Italian", "Japanese",

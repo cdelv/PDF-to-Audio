@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--sample', action='store_true', help='Clean/speak excerpts rather than full documents')
     parser.add_argument('--small', action='store_true')
     parser.add_argument('--cap-gib', type=float)
+    parser.add_argument('--resume-test', action='store_true', help='Reuse test audio only if its source text is unchanged by timestamp')
     args = parser.parse_args()
     output = ROOT / 'test-output/corpus'
     output.mkdir(parents=True, exist_ok=True)
@@ -81,9 +82,13 @@ def main():
                     parts = []
                     language = resolve_language(text)
                     for index, passage in enumerate(plan):
-                        wave, rate = engine.speak(passage['text'], language)
                         target = folder / f'{"sample" if args.sample else "part"}-{index:04d}.flac'
-                        sf.write(target, wave, rate)
+                        reusable = (args.resume_test and target.exists()
+                                    and target.stat().st_mtime >= (folder / name).stat().st_mtime
+                                    and sf.info(target).duration > 0)
+                        if not reusable:
+                            wave, rate = engine.speak(passage['text'], language)
+                            sf.write(target, wave, rate)
                         parts.append(target)
                     target = folder / ('sample.flac' if args.sample else 'audio.flac')
                     stitch(parts, target)

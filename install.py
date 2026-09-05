@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from core import APP_ID, ROOT, load_settings, save_settings
+from core import APP_ID, ROOT, RUNTIME, load_settings, save_settings
 
 
 def desktop_quote(value):
@@ -24,9 +24,9 @@ def main():
     content = "\n".join([
         "[Desktop Entry]", "Type=Application", "Version=1.0", "Name=PDF to Audio",
         "Comment=Turn documents into speech with a local Qwen voice",
-        f"Exec=/usr/bin/python3 {desktop_quote(ROOT / 'app.py')} %F",
+        f"Exec={desktop_quote(RUNTIME)} {desktop_quote(ROOT / 'app.py')} %F",
         # COSMIC can miss named icons in the user's hicolor directory. A direct
-        # path bypasses that lookup; GTK windows still use the installed name.
+        # path bypasses that lookup; Qt windows load the same bundled SVG.
         "Icon=" + str(icon_path.resolve()), "Terminal=false", "StartupNotify=true",
         "Categories=AudioVideo;Audio;", "Keywords=PDF;TTS;Speech;Audiobook;Qwen;",
         "MimeType=application/pdf;text/plain;text/markdown;text/x-rst;text/csv;",

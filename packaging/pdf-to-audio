@@ -1,2 +1,2 @@
 #!/bin/sh
-exec /usr/bin/python3 /app/share/pdf-to-audio/app.py "$@"
+exec /app/share/pdf-to-audio/.venv/bin/python /app/share/pdf-to-audio/app.py "$@"

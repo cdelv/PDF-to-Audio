@@ -1,22 +1,22 @@
 # PDF to Audio
 
-A native Linux desktop app that turns documents into locally generated speech. Drop in several PDFs or text files, choose a voice sample, and create an audio file for each document. No browser, server, or cloud inference is required.
+A desktop app that turns documents into locally generated speech, with one Python/PySide6 interface and conversion backend shared by Linux, Windows, and macOS. Drop in several PDFs or text files, choose a voice sample, and create an audio file for each document. No browser, server, or cloud inference is required.
 
 ## Install
 
-The intended end-user installer is **PDF-to-Audio.flatpak**. Flatpak packaging and clean-container installation tests are currently being validated; do not treat the source checkout as a finished one-click installer yet.
+The intended Linux installer is **PDF-to-Audio.flatpak**. The shared Qt interface is implemented; Flatpak validation and native Windows/macOS packaging are in progress. Do not treat the source checkout as a finished one-click installer yet. Windows and macOS have not yet been live-tested.
 
 Once a bundle is available:
 
 1. Make sure Flatpak support is installed through your distribution's Software application. GNOME Software and KDE Discover may require their Flatpak plugin.
-2. Double-click **PDF-to-Audio.flatpak**, then select **Install**. Allow the Software application to download the GNOME runtime if needed.
+2. Double-click **PDF-to-Audio.flatpak**, then select **Install**. Allow the Software application to download the Freedesktop runtime if needed.
 3. Open **PDF to Audio** from the application menu.
 
 The bundle is designed to contain its private Python environment, inference dependencies, CUDA user-space libraries, four selectable Qwen models, and a sample voice. No pip commands, environment editing, model accounts, or API keys are needed by the end user. Models make the download substantially larger than the GUI itself. Internet access is needed to install missing Flatpak runtimes; narration runs offline.
 
 **An NVIDIA host driver is required for GPU acceleration.** Flatpak can supply matching user-space driver extensions, but it cannot install or replace the host's kernel driver. Neither can an ordinary Docker container. Without a compatible driver, Automatic uses the CPU. Install the host driver using your distribution's supported driver manager; a reboot or Secure Boot enrollment may be required. See [NVIDIA's prerequisites](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) and [Flatpak driver extensions](https://docs.flatpak.org/en/latest/extension.html).
 
-The package targets x86-64 Linux. GNOME, KDE, and COSMIC can run the GTK/libadwaita interface. Window identity follows the Wayland and X11 desktop-entry conventions. GNOME and KDE sessions have not yet been live-tested here.
+The Flatpak targets x86-64 Linux. GNOME, KDE, and COSMIC use the same Qt interface. Window identity follows the Wayland and X11 desktop-entry conventions. GNOME and KDE sessions have not yet been live-tested here. Windows and macOS need separate native builds, not separate copies of the application code. macOS currently uses CPU inference; Apple GPU acceleration is not yet validated.
 
 ## Use
 
@@ -75,7 +75,7 @@ cd PDF-to-Audio
 python3 tools/build_flatpak.py
 ```
 
-The script installs the GNOME 49 build/runtime dependencies noninteractively, creates the private environment inside the build sandbox, installs pinned top-level inference packages, checks their dependencies, fetches pinned model revisions, and exports `dist/PDF-to-Audio.flatpak`. It never installs host kernel drivers. A read-only existing Hugging Face cache can be reused with `--reuse-model-cache /path/to/hub`; the resulting bundle contains independent copies, not links to that cache.
+The script installs the Freedesktop 25.08 build/runtime dependencies noninteractively, creates the private environment inside the build sandbox, installs pinned top-level inference packages, checks their dependencies, fetches pinned model revisions, and exports `dist/PDF-to-Audio.flatpak`. It never installs host kernel drivers. A read-only existing Hugging Face cache can be reused with `--reuse-model-cache /path/to/hub`; the resulting bundle contains independent copies, not links to that cache. `--sdk` can select an already installed compatible SDK on a development machine.
 
 For unattended installation of a built bundle on a machine with Flatpak:
 
@@ -84,7 +84,7 @@ flatpak install --user --noninteractive -y dist/PDF-to-Audio.flatpak
 flatpak run io.github.pdftoaudio.Desktop
 ```
 
-The sandbox has no inference-time network permission. App files and the private environment are mounted read-only. It uses the GNOME runtime, GPU-device access, document read access, and Music-folder write access; file selection uses desktop portals. Flatpak keeps settings under `~/.var/app/io.github.pdftoaudio.Desktop/`. Removing the package does not require editing system Python.
+The sandbox has no inference-time network permission. App files and the private environment are mounted read-only. It uses the Freedesktop runtime, GPU-device access, document read access, and Music-folder write access; file selection uses desktop portals. Flatpak keeps settings under `~/.var/app/io.github.pdftoaudio.Desktop/`. Removing the package does not require editing system Python.
 
 ### Clean-container installation test
 
@@ -101,17 +101,19 @@ The relaxed container seccomp policy permits nested Flatpak/bubblewrap namespace
 
 ## Development and testing
 
-For an already configured source checkout, `python3 install.py` registers it in the application menu. It is not a fresh-machine dependency installer. The GUI uses distribution GTK 4, libadwaita, and PyGObject; inference uses `.venv/bin/python` in isolated mode. The interpreter path is internal and is not editable in Settings.
+For an already configured Linux source checkout, `python3 install.py` registers it in the application menu. It is not a fresh-machine dependency installer. Both the Qt GUI and inference use the private `.venv`; workers start in isolated mode. The interpreter path is internal and is not editable in Settings. Source checkouts on Windows use `.venv/Scripts/python.exe`; macOS and Linux use `.venv/bin/python`.
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
-/usr/bin/python3 tests/appearance_smoke.py
+.venv/bin/python tests/appearance_smoke.py
 .venv/bin/python tests/smoke.py
-/usr/bin/python3 tests/gui_smoke.py
+.venv/bin/python tests/gui_smoke.py
 .venv/bin/python tests/multilingual_smoke.py
 .venv/bin/python tests/corpus_check.py /path/to/papers --stage extract
 .venv/bin/python tests/corpus_check.py /path/to/papers --stage clean --sample --small --cap-gib 3
 .venv/bin/python tests/corpus_check.py /path/to/papers --stage speak --sample --cap-gib 3
 ```
+
+The Qt appearance test checks light/dark palettes, red VRAM warnings, and settings persistence. The GUI smoke test checks drag-and-drop, worker communication, and cancellation with a stub; add `--audio` to generate a short real TXT recording. Neither requires the user's PDF collection.
 
 Corpus tests write only into ignored `test-output/corpus`, leaving the input PDFs untouched. `--sample` tests excerpts, not complete audiobooks. Omit it for whole-document conversion. `--cap-gib` caps PyTorch allocations; it is not physical GPU emulation and does not include every driver allocation.

@@ -7,7 +7,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ID = 'io.github.pdftoaudio.Desktop'
-RUNTIME = '49'
+RUNTIME = '25.08'
 
 
 def run(*args):
@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--workdir', type=Path, default=ROOT / 'test-output/flatpak-build')
     parser.add_argument('--skip-runtime-install', action='store_true')
+    parser.add_argument('--sdk', default=f'org.freedesktop.Sdk/x86_64/{RUNTIME}')
     parser.add_argument('--reuse-model-cache', type=Path, help='Optional read-only build cache; models are copied into the bundle')
     args = parser.parse_args()
     work = args.workdir.resolve()
@@ -28,13 +29,13 @@ def main():
     if not args.skip_runtime_install:
         run('flatpak', 'remote-add', '--user', '--if-not-exists', 'flathub', 'https://flathub.org/repo/flathub.flatpakrepo')
         run('flatpak', 'install', '--user', '--noninteractive', '-y', 'flathub',
-            f'org.gnome.Platform//{RUNTIME}', f'org.gnome.Sdk//{RUNTIME}')
+            f'org.freedesktop.Platform//{RUNTIME}', args.sdk)
     work.mkdir(parents=True, exist_ok=True)
     if not (build / 'metadata').exists():
-        run('flatpak', 'build-init', build, APP_ID, 'org.gnome.Sdk', 'org.gnome.Platform', RUNTIME)
+        run('flatpak', 'build-init', build, APP_ID, args.sdk, f'org.freedesktop.Platform/x86_64/{RUNTIME}')
     app = build / 'files/share/pdf-to-audio'
     app.mkdir(parents=True, exist_ok=True)
-    for name in ('app.py', 'core.py', 'worker.py', 'hardware.py', 'languages.py', 'pdf_input.py', 'requirements.txt'):
+    for name in ('app.py', 'core.py', 'worker.py', 'hardware.py', 'languages.py', 'pdf_input.py', 'requirements.txt', 'requirements-cuda.txt'):
         shutil.copy2(ROOT / name, app / name)
     shutil.copytree(ROOT / 'assets', app / 'assets', dirs_exist_ok=True)
     for name in ('models.json', 'download_models.py', 'verify_install.py'):
@@ -52,7 +53,7 @@ def main():
     if not (app / '.venv/bin/python').exists():
         run('flatpak', 'build', build, 'python3', '-m', 'venv', prefix + '/.venv')
     run('flatpak', 'build', '--share=network', build, python, '-m', 'pip', 'install', '--no-cache-dir',
-        '-r', prefix + '/requirements.txt')
+        '-r', prefix + '/requirements-cuda.txt')
     run('flatpak', 'build', build, python, '-m', 'pip', 'check')
     if args.reuse_model_cache:
         cache = args.reuse_model_cache.resolve()
