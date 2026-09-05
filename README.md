@@ -109,6 +109,23 @@ The relaxed container seccomp policy permits nested Flatpak/bubblewrap namespace
 
 ## Development and testing
 
+### Automated installation checks
+
+[Installation tests on GitHub Actions](https://github.com/cdelv/PDF-to-Audio/actions/workflows/install-tests.yml) run on pushes to `main` and pull requests:
+
+- **Ubuntu 24.04, Windows Server 2025, and macOS 15 (Apple Silicon):** create a fresh private environment, install the actual app dependencies, verify isolation and package compatibility, run unit tests, extract a generated PDF, and test Qt appearance, native window creation, worker communication, and model download/retry handling. Linux/Windows use CPU PyTorch wheels; macOS uses its standard wheels.
+- **Linux Flatpak:** install a separate probe app through a repository-backed installer, download tiny real configuration files using the production install hook, and verify offline discovery. This does not download model weights.
+- Logs and GUI screenshots are retained as workflow artifacts for seven days. Model weights are never uploaded as artifacts or cached by this workflow; pip package downloads may be cached, but every environment is created from scratch.
+
+For the expensive checks, open **Actions → Installation tests → Run workflow**:
+
+- Enable **models** to download only both 0.6B defaults on each OS, confirm no 1.7B models were installed, and perform short offline CPU cleanup and voice cloning.
+- Enable **full_flatpak** to build the complete CPU-only Flatpak repository and install it unattended inside a fresh Debian container, including the real default-model downloads, offline inference, and GUI launch.
+
+These checks do not yet test native Windows/macOS installers (those packages are unfinished), Windows 11 specifically, Intel Macs, GPU acceleration, signing/notarization, or interactive desktop integration. Hosted runners include system tools; a fresh private environment is not the same as a freshly installed consumer OS. The full Flatpak container check provides the stronger clean-OS installation test for Linux. No personal PDFs are used.
+
+### Local development
+
 For an already configured Linux source checkout, `python3 install.py` registers it in the application menu. It is not a fresh-machine dependency installer. Both the Qt GUI and inference use the private `.venv`; workers start in isolated mode. The interpreter path is internal and is not editable in Settings. Source checkouts on Windows use `.venv/Scripts/python.exe`; macOS and Linux use `.venv/bin/python`.
 
 ```sh

@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--skip-runtime-install', action='store_true')
     parser.add_argument('--sdk', default=f'org.freedesktop.Sdk/x86_64/{RUNTIME}')
     parser.add_argument('--repo-url', help='HTTPS URL where dist/repo will be hosted; writes a small .flatpakref installer')
+    parser.add_argument('--cpu', action='store_true', help='Build CPU-only dependencies for installation tests; default builds include CUDA')
     args = parser.parse_args()
     work = args.workdir.resolve()
     build = work / 'app'
@@ -39,7 +40,7 @@ def main():
     app.mkdir(parents=True, exist_ok=True)
     if (app / 'models').exists() or (build / 'files/extra').exists():
         raise SystemExit('Old bundled model data found. Choose a fresh --workdir; model weights must not be exported.')
-    for name in ('app.py', 'core.py', 'worker.py', 'model_store.py', 'hardware.py', 'languages.py', 'pdf_input.py', 'system_theme.py', 'requirements.txt', 'requirements-cuda.txt'):
+    for name in ('app.py', 'core.py', 'worker.py', 'model_store.py', 'hardware.py', 'languages.py', 'pdf_input.py', 'system_theme.py', 'requirements.txt', 'requirements-cuda.txt', 'requirements-cpu.txt'):
         shutil.copy2(ROOT / name, app / name)
     shutil.copytree(ROOT / 'assets', app / 'assets', dirs_exist_ok=True)
     for name in ('model-files.json', 'download_models.py', 'verify_install.py', 'apply_extra.py'):
@@ -60,7 +61,7 @@ def main():
     if not (app / '.venv/bin/python').exists():
         run('flatpak', 'build', build, 'python3', '-m', 'venv', prefix + '/.venv')
     run('flatpak', 'build', '--share=network', build, python, '-m', 'pip', 'install', '--no-cache-dir',
-        '-r', prefix + '/requirements-cuda.txt')
+        '-r', prefix + ('/requirements-cpu.txt' if args.cpu else '/requirements-cuda.txt'))
     run('flatpak', 'build', build, python, '-m', 'pip', 'check')
     run('flatpak', 'build', build, python, '-I', prefix + '/verify_install.py', '--dependencies-only')
     run('flatpak', 'build-finish', '--command=pdf-to-audio', '--socket=wayland', '--socket=fallback-x11',

@@ -4,6 +4,7 @@ Requires the development Flatpak SDK/runtime. Registers only a temporary,
 uniquely named test app, then uninstalls it; never touches the real app.
 """
 import json
+import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +28,9 @@ def run(*args):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--sdk', default='org.kde.Sdk/x86_64/6.11')
+    args = parser.parse_args()
     if subprocess.run(['flatpak', 'info', '--user', APP_ID], capture_output=True).returncode == 0:
         raise SystemExit('Probe app already exists; refusing to change it.')
     models = {name: dict(revision=MODELS[name]['revision'],
@@ -36,7 +40,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='pdf-audio-flatpak-') as temp:
         root = Path(temp)
         build = root / 'app'
-        run('flatpak', 'build-init', build, APP_ID, 'org.kde.Sdk/x86_64/6.11',
+        run('flatpak', 'build-init', build, APP_ID, args.sdk,
             'org.freedesktop.Platform/x86_64/25.08')
         prefix = build / 'files/share/pdf-to-audio'
         prefix.mkdir(parents=True)

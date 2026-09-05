@@ -62,7 +62,8 @@ print(json.dumps(dict(event='finished', completed=1, failed=0)), flush=True)
         if '--audio' in sys.argv:
             window.start()
         else:
-            with patch('app.worker_command', return_value=[sys.executable, '-u', '-c', protocol]):
+            with patch('app.missing_models', return_value=[]), \
+                 patch('app.worker_command', return_value=[sys.executable, '-u', '-c', protocol]):
                 window.start()
         assert window.process is not None and not window.start_button.isEnabled()
         deadline = time.monotonic() + 180
@@ -73,7 +74,8 @@ print(json.dumps(dict(event='finished', completed=1, failed=0)), flush=True)
         assert window.rows[0]['play'].isEnabled() and window.rows[0]['files'].isEnabled()
         window.clear()
         window.add_files([str(path)])
-        with patch('app.worker_command', return_value=[sys.executable, '-u', '-c', 'import time; time.sleep(30)']):
+        with patch('app.missing_models', return_value=[]), \
+             patch('app.worker_command', return_value=[sys.executable, '-u', '-c', 'import time; time.sleep(30)']):
             window.start()
         pump(0.2)
         window.cancel()

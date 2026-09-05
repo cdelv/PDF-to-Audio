@@ -1,0 +1,5 @@
+# Linux/Windows CPU installation; macOS uses requirements.txt.
+--extra-index-url https://download.pytorch.org/whl/cpu
+-r requirements.txt
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu

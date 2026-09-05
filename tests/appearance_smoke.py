@@ -63,8 +63,11 @@ def main():
         dialog.language_fields['document_language'].setCurrentIndex(0)
         voice = dialog.language_fields['voice_language']
         voice.setCurrentIndex(voice.findData('English'))
-        dialog.save()
-        pump()
+        # This test checks settings, not downloads. The separate download GUI
+        # test exercises installation without requiring a developer's model cache.
+        with patch('app.missing_models', return_value=[]):
+            dialog.save()
+            pump()
         config = load_settings()
         assert config['document_language'] == 'Auto'
         assert config['voice_language'] == 'English'
