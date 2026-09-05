@@ -2,12 +2,17 @@
 import os
 from pathlib import Path
 import sys
+import tempfile
 
 os.environ['QT_QPA_PLATFORM'] = 'windows' if sys.platform == 'win32' else 'cocoa' if sys.platform == 'darwin' else 'xcb'
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main():
+    import core
+    directory = tempfile.TemporaryDirectory(prefix='pdf-to-audio-native-test-')
+    core.DATA = Path(directory.name) / 'data'
+    core.CONFIG = Path(directory.name) / 'settings.json'
     from app import App, DesktopApplication, QTimer
     from core import ROOT
     application = DesktopApplication([])

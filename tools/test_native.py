@@ -33,9 +33,11 @@ def main():
         target = Path('/opt/pdf-to-audio')
     helper = target / ('pdf-to-audio-worker.exe' if sys.platform == 'win32' else 'pdf-to-audio-worker')
     gui = target / ('pdf-to-audio.exe' if sys.platform == 'win32' else 'pdf-to-audio')
-    env = dict(os.environ, HF_HUB_OFFLINE='1', QT_QPA_PLATFORM='offscreen')
+    platform = 'windows' if sys.platform == 'win32' else 'cocoa' if sys.platform == 'darwin' else 'xcb'
+    env = dict(os.environ, HF_HUB_OFFLINE='1', QT_QPA_PLATFORM=platform)
     run(helper, '--check', env=env)
-    run(gui, '--gui-smoke', env=env, timeout=60)
+    prefix = ['xvfb-run', '-a'] if sys.platform.startswith('linux') else []
+    run(*prefix, gui, '--gui-smoke', env=env, timeout=60)
     run(helper, '--setup-models', env=env, timeout=3600)
     run(helper, '--self-test', env=env, timeout=1800)
 

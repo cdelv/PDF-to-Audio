@@ -739,6 +739,14 @@ class DesktopApplication(QApplication):
 
 
 def main():
+    global DATA
+    smoke = '--gui-smoke' in sys.argv
+    if smoke:
+        import tempfile
+        import core
+        smoke_directory = tempfile.TemporaryDirectory(prefix='pdf-to-audio-gui-test-')
+        DATA = core.DATA = Path(smoke_directory.name) / 'data'
+        core.CONFIG = Path(smoke_directory.name) / 'settings.json'
     if sys.platform == 'win32':
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
@@ -748,13 +756,22 @@ def main():
     application.setDesktopFileName(APP_ID)
     application.setWindowIcon(QIcon(str(ROOT / 'assets/icon.svg')))
     application.window = window = App()
-    smoke = '--gui-smoke' in sys.argv
     if not smoke:
         window.restore_queue()
     window.add_files([arg for arg in sys.argv[1:] if not arg.startswith('-')])
     window.show()
     if smoke:
-        QTimer.singleShot(1000, lambda: application.exit(0 if window.isVisible() and not window.grab().isNull() else 1))
+        window.launch(dict(download_models=[]), 'download')
+        probe = QTimer(application)
+
+        def check_helper():
+            if window.process is None:
+                success = window.terminal_event == 'models_ready' and window.isVisible() and not window.grab().isNull()
+                application.exit(0 if success else 1)
+
+        probe.timeout.connect(check_helper)
+        probe.start(100)
+        QTimer.singleShot(20000, lambda: application.exit(1))
     else:
         QTimer.singleShot(0, window.setup_models)
     return application.exec()

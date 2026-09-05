@@ -85,6 +85,9 @@ cp -a "{package / 'usr/share/icons'}" "%{{buildroot}}/usr/share/"
         run('rpmbuild', '-bb', '--define', f'_topdir {rpm}', '--define', '__os_install_post %{nil}', str(spec))
         for artifact in (rpm / 'RPMS/x86_64').glob('*.rpm'):
             shutil.copy2(artifact, installers / 'PDF-to-Audio-Linux-x86_64.rpm')
+        # These are generated packaging staging trees, not source or user data.
+        shutil.rmtree(package)
+        shutil.rmtree(rpm / 'BUILDROOT')
 
 
 if __name__ == '__main__':

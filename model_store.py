@@ -56,6 +56,9 @@ def missing_models(names):
 
 def download_file(source, target, progress):
     """Resume interrupted transfers and publish only checksum-verified files."""
+    import ssl
+    import certifi
+    tls = ssl.create_default_context(cafile=certifi.where())
     target.parent.mkdir(parents=True, exist_ok=True)
     part = target.with_name(target.name + '.part')
     error = None
@@ -68,7 +71,7 @@ def download_file(source, target, progress):
         try:
             if offset < source['size']:
                 request = Request(source['url'], headers={'Range': f'bytes={offset}-'} if offset else {})
-                with urlopen(request, timeout=30) as response:
+                with urlopen(request, timeout=30, context=tls) as response:
                     resumed = offset and response.status == 206
                     if resumed and not response.headers.get('Content-Range', '').startswith(f'bytes {offset}-'):
                         raise ValueError('Invalid download resume response')
