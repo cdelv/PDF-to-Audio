@@ -1,11 +1,18 @@
 # PDF to Audio
 
+<img src="assets/icon.svg" width="72" alt="PDF to Audio icon">
+
+[![Installation tests](https://github.com/cdelv/PDF-to-Audio/actions/workflows/install-tests.yml/badge.svg)](https://github.com/cdelv/PDF-to-Audio/actions/workflows/install-tests.yml)
+[![Downloads](https://img.shields.io/github/v/release/cdelv/PDF-to-Audio?include_prereleases&label=download)](https://github.com/cdelv/PDF-to-Audio/releases)
+![Platforms: Linux, Windows, macOS](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS-blue)
+
 Turn PDFs and text documents into spoken audio on your own computer. Drop files into the window, choose an output folder, and press **Create audio**.
 
 - Convert multiple PDFs, TXT files, or Markdown documents in one batch.
 - Narrate in each document's original language using a supplied or custom voice sample.
 - Clean PDF text with Qwen3, with instructions to preserve figure and table captions while omitting table contents.
 - Follow your desktop's light/dark appearance and manage voices, languages, and models through the GUI.
+- Track elapsed time, cancel safely, and resume saved conversions—even after closing the app. Larger GPUs batch speech passages automatically.
 
 Documents and voice recordings stay on your computer. The two default **0.6B models** download during setup—about **4 GB** combined—and then work offline. Optional **1.7B models** download only when selected and saved in Settings. Scanned PDFs need OCR first; complex documents may need a review of the extracted text.
 

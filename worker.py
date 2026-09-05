@@ -17,6 +17,7 @@ from core import BOUNDARY, ROOT, SUPPORTED, cleanup_chunks, omit_tables, plain_t
 from languages import check_cleanup_language, detect_language, resolve_language
 from hardware import MODEL_VRAM
 from model_store import local_model
+from checkpoints import atomic_json, digest, open_job, valid_audio
 
 # Downloads use the separate, pinned HTTP downloader, never Hub inference APIs.
 os.environ['HF_HUB_OFFLINE'] = '1'
@@ -68,13 +69,23 @@ class Cleaner:
         if not self.prompt:
             raise ValueError("The cleanup prompt is empty. Edit it in Settings.")
 
-    def clean(self, text, progress, language="Auto"):
+    def clean(self, text, progress, language="Auto", checkpoint=None):
         pieces = cleanup_chunks(omit_tables(text))
         cleaned = []
         self.warnings = []
+        saved = json.loads(checkpoint.read_text(encoding='utf-8')) if checkpoint and checkpoint.exists() else []
         for i, part in enumerate(pieces):
             progress(i, len(pieces))
+            if i < len(saved) and saved[i]['source'] == part:
+                cleaned.append(saved[i]['text'])
+                self.warnings.extend(saved[i]['warnings'])
+                continue
+            saved = saved[:i]
+            start = len(self.warnings)
             cleaned.append(self.clean_part(part, language))
+            saved.append(dict(source=part, text=cleaned[-1], warnings=self.warnings[start:]))
+            if checkpoint:
+                atomic_json(checkpoint, saved)
         return "\n\n".join(cleaned)
 
     def clean_part(self, part, language, depth=0):
@@ -149,6 +160,16 @@ class Speaker:
             audio = audio.mean(axis=1)
         self.model = Qwen3TTSModel.from_pretrained(local_model(config["tts"]), **model_options(config, config["tts"]))
         self.prompt = self.model.create_voice_clone_prompt(ref_audio=(audio, rate), ref_text=transcript)
+        self.batch_size = 1
+        import torch
+        if self.model.model.device.type == 'cuda':
+            free, total = torch.cuda.mem_get_info()
+            # Keep the 4 GB path sequential; larger cards can share generation
+            # overhead across passages. OOM halves the batch automatically.
+            self.batch_size = 6 if total >= 10 * 2**30 and free >= 3 * 2**30 else 2 if total >= 6 * 2**30 and free >= 2 * 2**30 else 1
+        requested = int(config.get('batch_size', 0))
+        if requested:
+            self.batch_size = min(self.batch_size, max(1, requested))
         # Qwen infers the reference language from ref_audio/ref_text. It exposes
         # only a target-text language argument, never a separate reference tag.
         # The public audio API discards token counts. Check the underlying result
@@ -186,7 +207,12 @@ class Speaker:
             if len({rate for _, rate in rendered}) != 1:
                 raise ValueError("Retried speech passages have incompatible sample rates.")
             return np.concatenate([wave for wave, _ in rendered]), rendered[0][1]
-        wave = np.asarray(waves[0], dtype=np.float32)
+        return self.finish_wave(waves[0], rate), rate
+
+    @staticmethod
+    def finish_wave(wave, rate):
+        import numpy as np
+        wave = np.asarray(wave, dtype=np.float32)
         if len(wave) == 0 or not np.isfinite(wave).all() or np.max(np.abs(wave)) < 0.0001:
             raise ValueError("The speech model produced empty, silent, or invalid audio.")
         # A tiny ramp at the outer edges suppresses clicks without overlapping words.
@@ -194,7 +220,32 @@ class Speaker:
         if n:
             wave[:n] *= np.linspace(0, 1, n)
             wave[-n:] *= np.linspace(1, 0, n)
-        return wave, rate
+        return wave
+
+    def speak_batch(self, passages):
+        import torch
+        if len(passages) == 1:
+            return [self.speak(passages[0]['text'], passages[0]['language'])]
+        fallback = False
+        try:
+            waves, rate = self.model.generate_voice_clone(
+                text=[p['text'].strip() for p in passages], language=[p['language'] for p in passages],
+                voice_clone_prompt=self.prompt, max_new_tokens=2048)
+            if len(waves) != len(passages):
+                raise ValueError('Speech batch returned an incorrect number of recordings.')
+            return [(self.finish_wave(wave, rate), rate) for wave in waves]
+        except torch.OutOfMemoryError:
+            self.batch_size = max(1, len(passages) // 2)
+            fallback = True
+        except ValueError as error:
+            if 'generation limit' not in str(error):
+                raise
+            fallback = True
+        if fallback:
+            # Retry outside the exception handler so its traceback releases GPU tensors.
+            release_gpu()
+            middle = max(1, len(passages) // 2)
+            return self.speak_batch(passages[:middle]) + self.speak_batch(passages[middle:])
 
 
 def stitch(paths, target):
@@ -215,8 +266,14 @@ def stitch(paths, target):
     temporary.replace(target)
 
 
-def run_batch(config, files, emit):
+def run_batch(config, files, emit, resume=None):
+    with contextlib.ExitStack() as locks:
+        return _run_batch(config, files, emit, resume or {}, locks)
+
+
+def _run_batch(config, files, emit, resume, locks):
     import soundfile as sf
+    from filelock import FileLock
     output = Path(config["output"]).expanduser()
     output.mkdir(parents=True, exist_ok=True)
     ready, failed, completed = [], 0, 0
@@ -228,8 +285,18 @@ def run_batch(config, files, emit):
                 source = Path(filename)
                 if not source.is_file() or source.suffix.lower() not in SUPPORTED:
                     raise ValueError("Select an existing PDF, TXT, Markdown, RST, CSV, or LOG file.")
-                folder = Path(tempfile.mkdtemp(prefix=source.stem[:80] + "-", dir=output))
+                existing = resume.get(filename)
+                folder = Path(existing).resolve() if existing else Path(tempfile.mkdtemp(prefix=source.stem[:80] + "-", dir=output))
+                locks.enter_context(FileLock(str(folder / '.conversion.lock'), timeout=0))
+                job = open_job(folder, source, config, resume=bool(existing))
                 emit("progress", index=index, fraction=0.02, message="Reading document", folder=str(folder))
+                if job['status'] in ('ready', 'complete'):
+                    if digest(folder / 'passages.json') != job['plan_digest']:
+                        raise ValueError('Saved narration plan changed or is damaged. Start a new conversion.')
+                    plan = json.loads((folder / 'passages.json').read_text(encoding='utf-8'))
+                    ready.append((index, folder, plan))
+                    emit('progress', index=index, fraction=0.25, message='Resuming saved narration', folder=str(folder))
+                    continue
                 if source.suffix.lower() == ".pdf":
                     from pdf_input import extract_pdf
                     text = extract_pdf(source)
@@ -241,7 +308,8 @@ def run_batch(config, files, emit):
                         emit("progress", index=index, fraction=0.03, message="Loading Qwen3 text cleanup")
                         cleaner = Cleaner(config)
                     text = cleaner.clean(text, lambda n, total: emit("progress", index=index,
-                        fraction=0.05 + 0.2 * n / total, message=f"Cleaning {language} text · {n+1}/{total}"), language)
+                        fraction=0.05 + 0.2 * n / total, message=f"Cleaning {language} text · {n+1}/{total}"), language,
+                        checkpoint=folder / 'cleanup.json')
                     if cleaner.warnings:
                         (folder / "warnings.txt").write_text(
                             "Some excerpts were retained in their original wording because model cleanup was unreliable. "
@@ -257,7 +325,9 @@ def run_batch(config, files, emit):
                 plan = speech_plan(text)
                 for passage in plan:
                     passage["language"] = language
-                (folder / "passages.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+                atomic_json(folder / 'passages.json', plan)
+                job.update(status='ready', plan_digest=digest(folder / 'passages.json'))
+                atomic_json(folder / 'job.json', job)
                 ready.append((index, folder, plan))
                 emit("progress", index=index, fraction=0.25, message=f"Text ready · {language} · {len(plan)} passages")
             except Exception as error:
@@ -271,26 +341,36 @@ def run_batch(config, files, emit):
     try:
         for index, folder, plan in ready:
             try:
-                if speaker is None:
+                parts = folder / 'passages'
+                parts.mkdir(exist_ok=True)
+                paths = [parts / f'{number+1:06d}.flac' for number in range(len(plan))]
+                pending = [number for number, path in enumerate(paths) if not valid_audio(path)]
+                if pending and speaker is None:
                     emit("progress", index=index, fraction=0.25, message="Loading Qwen3 voice")
                     speaker = Speaker(config)
-                (folder / "languages.json").write_text(json.dumps(dict(
-                    document_language=plan[0]["language"], voice_language=speaker.voice_language), indent=2))
-                parts = folder / "passages"
-                parts.mkdir()
-                paths = []
-                for number, passage in enumerate(plan):
-                    emit("progress", index=index, fraction=0.25 + 0.7 * number / len(plan),
-                         message=f"Speaking {passage['language']} · {number+1}/{len(plan)} · section {passage['section']}")
-                    wave, rate = speaker.speak(passage["text"], language=passage["language"])
-                    path = parts / f"{number+1:06d}.flac"
-                    temporary = path.with_suffix(".partial.flac")
-                    sf.write(temporary, wave, rate, subtype="PCM_16")
-                    temporary.replace(path)
-                    paths.append(path)
+                if speaker is not None:
+                    atomic_json(folder / 'languages.json', dict(document_language=plan[0]['language'], voice_language=speaker.voice_language))
+                done = len(plan) - len(pending)
+                while pending:
+                    count = getattr(speaker, 'batch_size', 1)
+                    numbers = pending[:count]
+                    emit('progress', index=index, fraction=0.25 + 0.7 * done / len(plan),
+                         message=f'Speaking · {done}/{len(plan)} complete · batch of {len(numbers)}')
+                    batch = [plan[number] for number in numbers]
+                    rendered = speaker.speak_batch(batch) if len(batch) > 1 else [speaker.speak(batch[0]['text'], language=batch[0]['language'])]
+                    for number, (wave, rate) in zip(numbers, rendered, strict=True):
+                        path = paths[number]
+                        temporary = path.with_suffix('.partial.flac')
+                        sf.write(temporary, wave, rate, subtype='PCM_16')
+                        temporary.replace(path)
+                        done += 1
+                    pending = pending[len(numbers):]
                 emit("progress", index=index, fraction=0.96, message="Joining audio")
                 target = folder / "audio.flac"
                 stitch(paths, target)
+                job = json.loads((folder / 'job.json').read_text(encoding='utf-8'))
+                job['status'] = 'complete'
+                atomic_json(folder / 'job.json', job)
                 completed += 1
                 warning = " · Review warnings.txt" if (folder / "warnings.txt").exists() else ""
                 emit("done", index=index, fraction=1.0, message=f"Ready to listen · {plan[0]['language']}{warning}", audio=str(target), folder=str(folder))
@@ -322,7 +402,7 @@ def main():
                 emit('models_ready', message='Models are ready. Narration works offline.')
             else:
                 os.environ['HF_HUB_OFFLINE'] = '1'
-                run_batch(request["config"], request["files"], emit)
+                run_batch(request["config"], request["files"], emit, request.get('resume'))
     except Cancelled:
         emit("cancelled", message="Cancelled. Completed passages are kept in the output folder.")
     except Exception as error:

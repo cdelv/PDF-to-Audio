@@ -23,7 +23,7 @@ else:
 
 def worker_command():
     if getattr(sys, 'frozen', False):
-        return [str(RUNTIME), '--worker']
+        return [str(Path(sys.executable).with_name('pdf-to-audio-worker.exe' if sys.platform == 'win32' else 'pdf-to-audio-worker'))]
     return [str(RUNTIME), '-I', '-u', str(ROOT / 'worker.py')]
 TEXT_TYPES = {".txt", ".md", ".markdown", ".rst", ".log", ".csv"}
 SUPPORTED = TEXT_TYPES | {".pdf"}

@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sys
 import threading
+import time
 
 # Frozen applications launch this same executable in worker mode. Do this
 # before importing Qt so inference has no window or GUI runtime overhead.
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QF
 from core import APP_ID, DATA, ROOT, RUNTIME, SUPPORTED, LANGUAGES, load_settings, save_settings, worker_command
 from hardware import gpu_memory, model_label
 from model_store import DEFAULT_MODELS, missing_models
+from checkpoints import atomic_json
 
 
 def label(text, name=None):
@@ -254,6 +256,11 @@ class App(QMainWindow):
         self.job = 'conversion'
         self.download_names = []
         self.after_download = None
+        self.elapsed = 0.0
+        self.started_at = None
+        self.clock = QTimer(self)
+        self.clock.setInterval(1000)
+        self.clock.timeout.connect(self.update_clock)
         self.setWindowTitle('PDF to Audio')
         self.setWindowIcon(QIcon(str(ROOT / 'assets/icon.svg')))
         self.setAcceptDrops(True)
@@ -286,6 +293,8 @@ class App(QMainWindow):
         self.count = label('DOCUMENTS · 0', 'muted')
         queue_header.addWidget(self.count, 1)
         self.clear_button = button('Clear', self.clear)
+        self.resume_button = button('Resume folder…', self.resume_folder)
+        queue_header.addWidget(self.resume_button)
         queue_header.addWidget(self.clear_button)
         body.addLayout(queue_header)
         scroll = QScrollArea()
@@ -318,6 +327,8 @@ class App(QMainWindow):
         self.status = label('Ready. PDFs are cleaned before narration; text files go straight to speech.', 'muted')
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.addWidget(self.status)
+        self.timer_label = label('Elapsed · 00:00:00', 'muted')
+        body.addWidget(self.timer_label)
         actions = QHBoxLayout()
         actions.addWidget(button('View log', lambda: self.open_path(DATA / 'conversion.log')))
         self.retry_button = button('Retry model download', self.retry_download)
@@ -356,6 +367,75 @@ class App(QMainWindow):
 
     def notify(self, message):
         self.status.setText(message)
+
+    def update_clock(self):
+        seconds = int(self.elapsed + (time.monotonic() - self.started_at if self.started_at is not None else 0))
+        self.timer_label.setText(f'Elapsed · {seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}')
+
+    def stop_clock(self):
+        if self.started_at is not None:
+            self.elapsed += time.monotonic() - self.started_at
+            self.started_at = None
+        self.clock.stop()
+        self.update_clock()
+        self.save_queue()
+
+    def save_queue(self):
+        elapsed = self.elapsed + (time.monotonic() - self.started_at if self.started_at is not None else 0)
+        try:
+            atomic_json(DATA / 'queue.json', dict(elapsed=elapsed, rows=[
+                {key: row[key] for key in ('path', 'folder', 'audio', 'fraction')} for row in self.rows]))
+        except OSError as error:
+            self.notify(f'Could not save the queue: {error}. Resume folder can still reopen saved conversions.')
+
+    def restore_queue(self):
+        path = DATA / 'queue.json'
+        if not path.exists():
+            return
+        try:
+            saved = json.loads(path.read_text(encoding='utf-8'))
+            self.elapsed = max(0, float(saved.get('elapsed', 0)))
+            for item in saved['rows']:
+                self.add_files([item['path']])
+                row = next((r for r in self.rows if r['path'] == item['path']), None)
+                if row is not None:
+                    row['folder'] = item.get('folder')
+                    row['audio'] = item.get('audio') if item.get('audio') and Path(item['audio']).is_file() else None
+                    row['fraction'] = 1 if row['audio'] else 0
+                    row['play'].setEnabled(bool(row['audio']))
+                    row['files'].setEnabled(bool(row['folder']))
+                    row['status'].setText('Ready to listen' if row['audio'] else 'Ready to resume' if row['folder'] else 'Queued')
+            self.update_clock()
+            self.refresh()
+            self.save_queue()
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            self.notify('Could not restore the queue: ' + str(error))
+
+    def resume_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, 'Choose a saved conversion folder', self.config['output'])
+        if not folder:
+            return
+        try:
+            job = json.loads((Path(folder) / 'job.json').read_text(encoding='utf-8'))
+            self.add_files([job['source']])
+            row = next(r for r in self.rows if r['path'] == job['source'])
+            row.update(folder=folder, audio=None, fraction=0)
+            row['status'].setText('Ready to resume')
+            row['files'].setEnabled(True)
+            row['play'].setEnabled(False)
+            self.refresh()
+            self.save_queue()
+        except (OSError, ValueError, KeyError, StopIteration) as error:
+            self.notify('Cannot open that checkpoint: ' + str(error))
+
+    def restart(self, row):
+        # The old output directory is kept; this only detaches it from the queue.
+        row.update(folder=None, audio=None, fraction=0)
+        row['status'].setText('Queued for a new conversion · previous files kept')
+        row['play'].setEnabled(False)
+        row['files'].setEnabled(False)
+        self.refresh()
+        self.save_queue()
 
     def open_path(self, path):
         if not path or not Path(path).expanduser().exists():
@@ -440,14 +520,16 @@ class App(QMainWindow):
             row['play'] = button('Play', lambda checked=False, r=row: self.open_path(r['audio']))
             row['files'] = button('Files', lambda checked=False, r=row: self.open_path(r['folder']))
             row['remove'] = button('×', lambda checked=False, r=row: self.remove(r))
+            row['restart'] = button('Start over', lambda checked=False, r=row: self.restart(r))
             row['remove'].setToolTip('Remove document')
             row['play'].setEnabled(False)
             row['files'].setEnabled(False)
-            for key in ('play', 'files', 'remove'):
+            for key in ('play', 'files', 'restart', 'remove'):
                 content.addWidget(row[key])
             self.rows.append(row)
             self.queue.insertWidget(self.queue.count() - 1, card)
         self.refresh()
+        self.save_queue()
         if ignored:
             self.notify('Unsupported or missing files: ' + ', '.join(ignored))
 
@@ -457,6 +539,7 @@ class App(QMainWindow):
             row['widget'].deleteLater()
             self.rows.remove(row)
             self.refresh()
+            self.save_queue()
 
     def clear(self):
         for row in list(self.rows):
@@ -466,13 +549,15 @@ class App(QMainWindow):
     def refresh(self):
         busy = self.process is not None
         self.count.setText(f'DOCUMENTS · {len(self.rows)}')
-        for widget in (self.settings_button, self.output_button, self.add_button, self.clear_button):
+        for widget in (self.settings_button, self.output_button, self.add_button, self.clear_button, self.resume_button):
             widget.setEnabled(not busy)
         self.start_button.setEnabled(not busy and any(not row['audio'] for row in self.rows))
+        self.start_button.setText('Resume audio' if any(row['folder'] and not row['audio'] for row in self.rows) else 'Create audio')
         self.cancel_button.setEnabled(busy)
         self.retry_button.setEnabled(not busy)
         for row in self.rows:
             row['remove'].setEnabled(not busy)
+            row['restart'].setEnabled(not busy and bool(row['folder']))
 
     def start(self):
         if self.process:
@@ -495,12 +580,19 @@ class App(QMainWindow):
             for row in self.active:
                 row['fraction'] = 0
                 row['status'].setText('Queued')
-            self.launch(dict(config=self.config, files=[row['path'] for row in self.active]), 'conversion')
+            resume = {row['path']: row['folder'] for row in self.active if row['folder']}
+            if not resume:
+                self.elapsed = 0.0
+            self.launch(dict(config=self.config, files=[row['path'] for row in self.active], resume=resume), 'conversion')
         except Exception as error:
             self.notify(str(error))
 
     def launch(self, request, job):
         self.job = job
+        if job == 'conversion':
+            self.started_at = time.monotonic()
+            self.clock.start()
+            self.update_clock()
         self.terminal_event = None
         self.cancelling = False
         self.stdout_buffer = b''
@@ -561,6 +653,7 @@ class App(QMainWindow):
                 row['play'].setEnabled(True)
             self.progress.setValue(round(1000 * sum(row['fraction'] for row in self.active) / len(self.active)))
             self.notify(event['message'])
+            self.save_queue()
         elif kind == 'finished':
             self.terminal_event = kind
             self.notify(f"Finished · {event['completed']} audio files created · {event['failed']} failed. Use Play to listen or Files to review the text and audio.")
@@ -577,6 +670,7 @@ class App(QMainWindow):
             self.notify('Could not start the private worker: ' + self.process.errorString())
             self.process.deleteLater()
             self.process = None
+            self.stop_clock()
             self.retry_button.setVisible(self.job == 'download')
             self.refresh()
 
@@ -585,6 +679,7 @@ class App(QMainWindow):
         process, self.process = self.process, None
         if process:
             process.deleteLater()
+        self.stop_clock()
         if self.cancelling:
             self.notify('Download cancelled. Partial files are kept; Retry resumes setup.' if self.job == 'download'
                         else 'Cancelled. Completed passages are kept in the output folder.')
@@ -623,6 +718,7 @@ class App(QMainWindow):
             self.cancel()
             event.ignore()
         else:
+            self.save_queue()
             event.accept()
 
 
@@ -652,9 +748,15 @@ def main():
     application.setDesktopFileName(APP_ID)
     application.setWindowIcon(QIcon(str(ROOT / 'assets/icon.svg')))
     application.window = window = App()
+    smoke = '--gui-smoke' in sys.argv
+    if not smoke:
+        window.restore_queue()
     window.add_files([arg for arg in sys.argv[1:] if not arg.startswith('-')])
     window.show()
-    QTimer.singleShot(0, window.setup_models)
+    if smoke:
+        QTimer.singleShot(1000, lambda: application.exit(0 if window.isVisible() and not window.grab().isNull() else 1))
+    else:
+        QTimer.singleShot(0, window.setup_models)
     return application.exec()
 
 

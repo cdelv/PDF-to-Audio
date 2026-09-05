@@ -40,7 +40,7 @@ def main():
     app.mkdir(parents=True, exist_ok=True)
     if (app / 'models').exists() or (build / 'files/extra').exists():
         raise SystemExit('Old bundled model data found. Choose a fresh --workdir; model weights must not be exported.')
-    for name in ('app.py', 'core.py', 'worker.py', 'model_store.py', 'hardware.py', 'languages.py', 'pdf_input.py', 'system_theme.py', 'requirements.txt', 'requirements-cuda.txt', 'requirements-cpu.txt'):
+    for name in ('app.py', 'core.py', 'worker.py', 'checkpoints.py', 'model_store.py', 'hardware.py', 'languages.py', 'pdf_input.py', 'system_theme.py', 'requirements.txt', 'requirements-cuda.txt', 'requirements-cpu.txt'):
         shutil.copy2(ROOT / name, app / name)
     shutil.copytree(ROOT / 'assets', app / 'assets', dirs_exist_ok=True)
     for name in ('model-files.json', 'download_models.py', 'verify_install.py', 'apply_extra.py'):

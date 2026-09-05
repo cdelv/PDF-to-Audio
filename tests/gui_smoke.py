@@ -84,6 +84,21 @@ print(json.dumps(dict(event='finished', completed=1, failed=0)), flush=True)
             pump()
         assert window.process is None, 'Cancellation left a worker running'
         assert window.start_button.isEnabled()
+        checkpoint = Path(directory) / 'saved-conversion'
+        checkpoint.mkdir()
+        window.rows[0]['folder'] = str(checkpoint)
+        window.elapsed = 65
+        window.update_clock()
+        assert window.timer_label.text().endswith('00:01:05')
+        window.save_queue()
+        restored = App()
+        restored.restore_queue()
+        assert restored.elapsed == 65
+        assert restored.rows[0]['folder'] == str(checkpoint)
+        assert restored.start_button.text() == 'Resume audio'
+        restored.restart(restored.rows[0])
+        assert restored.rows[0]['folder'] is None and checkpoint.exists()
+        restored.close()
         window.close()
         application.quit()
         print('Qt drag/drop, settings, worker events, and cancellation passed.')
