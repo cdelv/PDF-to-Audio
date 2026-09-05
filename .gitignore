@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local app artifacts
+test-output/
+.flatpak-builder/
+PDF to Audio.desktop

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.pdftoaudio.Desktop</id>
+  <name>PDF to Audio</name>
+  <summary>Read documents aloud with a local cloned voice</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description><p>Convert PDF and text documents to audio on your own computer. Select several documents, choose a voice sample, and create recordings in their original languages. Local Qwen models are included. NVIDIA acceleration requires a compatible host driver; CPU mode is available without one.</p></description>
+  <launchable type="desktop-id">io.github.pdftoaudio.Desktop.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.1.0" date="2026-09-05"/></releases>
+</component>
