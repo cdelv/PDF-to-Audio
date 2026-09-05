@@ -16,21 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core import BOUNDARY, ROOT, SUPPORTED, cleanup_chunks, omit_tables, plain_text, speech_plan, split_text
 from languages import check_cleanup_language, detect_language, resolve_language
 from hardware import MODEL_VRAM
+from model_store import local_model
 
-os.environ["HF_HUB_OFFLINE"] = "1"
+# Downloads use the separate, pinned HTTP downloader, never Hub inference APIs.
+os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-
-def local_model(name):
-    # Passing a Hub ID makes some Transformers versions query model metadata
-    # even with local_files_only=True. A resolved snapshot avoids that lookup.
-    if Path(name).expanduser().is_dir():
-        return str(Path(name).expanduser().resolve())
-    bundled = ROOT / "models" / name.replace("/", "--")
-    if bundled.is_dir():
-        return str(bundled)
-    from huggingface_hub import snapshot_download
-    return snapshot_download(name, local_files_only=True)
 
 
 class Cancelled(BaseException):
@@ -326,7 +316,13 @@ def main():
     try:
         request = json.loads(sys.stdin.readline())
         with contextlib.redirect_stdout(sys.stderr):
-            run_batch(request["config"], request["files"], emit)
+            if 'download_models' in request:
+                from model_store import ensure_models
+                ensure_models(request['download_models'], emit)
+                emit('models_ready', message='Models are ready. Narration works offline.')
+            else:
+                os.environ['HF_HUB_OFFLINE'] = '1'
+                run_batch(request["config"], request["files"], emit)
     except Cancelled:
         emit("cancelled", message="Cancelled. Completed passages are kept in the output folder.")
     except Exception as error:

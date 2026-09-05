@@ -33,6 +33,7 @@ def main():
             window.settings()
             pump()
         dialog = window.settings_dialog
+        dialog.fields['llm'].setCurrentIndex(dialog.fields['llm'].findData('Qwen/Qwen3-1.7B'))
         assert [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())] == ['Voice', 'Languages', 'Cleanup prompt', 'Models']
         output = ROOT / 'test-output/appearance'
         output.mkdir(parents=True, exist_ok=True)

@@ -3,8 +3,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import ROOT, defaults
 from worker import Cleaner, Speaker, local_model
+from model_store import DEFAULT_MODELS, MODELS, missing_models
 
 import torch
 import transformers
@@ -12,12 +14,16 @@ import qwen_tts
 import markitdown
 import soundfile
 
-for name in __import__('json').loads((ROOT / 'models.json').read_text()):
-    path = Path(local_model(name))
-    assert (path / 'config.json').is_file(), name
-    assert list(path.glob('*.safetensors')), name
+if '--dependencies-only' not in sys.argv:
+    for name in DEFAULT_MODELS:
+        path = Path(local_model(name))
+        assert (path / 'config.json').is_file(), name
+        assert list(path.glob('*.safetensors')), name
+    if '--defaults-only' in sys.argv:
+        optional = [name for name in MODELS if name not in DEFAULT_MODELS]
+        assert missing_models(optional) == optional, 'Optional models were installed unexpectedly'
 assert (ROOT / 'assets/voice.wav').is_file()
-print('Offline models and inference dependencies verified.', flush=True)
+print('Inference dependencies verified.' if '--dependencies-only' in sys.argv else 'Offline default models and inference dependencies verified.', flush=True)
 print('CUDA available:', torch.cuda.is_available(), flush=True)
 if '--cpu-inference' in sys.argv:
     torch.set_num_threads(2)

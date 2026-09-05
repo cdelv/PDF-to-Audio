@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QF
 
 from core import APP_ID, DATA, ROOT, RUNTIME, SUPPORTED, LANGUAGES, load_settings, save_settings, worker_command
 from hardware import gpu_memory, model_label
+from model_store import DEFAULT_MODELS, missing_models
 
 
 def label(text, name=None):
@@ -125,14 +126,14 @@ class SettingsDialog(QDialog):
         prompt.addWidget(self.prompt, 1)
 
         models = tab('Models')
-        models.addWidget(label('Models run locally. The smaller voice model is the faster default.', 'muted'))
+        models.addWidget(label('Both 0.6B models are installed by default. Saving a missing 1.7B selection downloads it automatically; models run locally afterwards.', 'muted'))
         self.gpu_status = label('Detecting GPU memory…', 'muted')
         models.addWidget(self.gpu_status)
         models.addWidget(label('VRAM figures are estimates. Red means the model exceeds your GPU capacity. Automatic uses CPU when a model will not fit. Choose both 0.6B models for a 4 GB card.', 'muted'))
         self.fields = {}
         for key, title, choices in (
             ('tts', 'Speech model', ['Qwen/Qwen3-TTS-12Hz-0.6B-Base', 'Qwen/Qwen3-TTS-12Hz-1.7B-Base']),
-            ('llm', 'PDF cleanup model', ['Qwen/Qwen3-1.7B', 'Qwen/Qwen3-0.6B']),
+            ('llm', 'PDF cleanup model', ['Qwen/Qwen3-0.6B', 'Qwen/Qwen3-1.7B']),
             ('device', 'Processor', ['auto', 'cuda:0', 'cpu']),
         ):
             models.addWidget(label(title))
@@ -250,6 +251,9 @@ class App(QMainWindow):
         self.terminal_event = None
         self.closing = self.cancelling = False
         self.stdout_buffer = b''
+        self.job = 'conversion'
+        self.download_names = []
+        self.after_download = None
         self.setWindowTitle('PDF to Audio')
         self.setWindowIcon(QIcon(str(ROOT / 'assets/icon.svg')))
         self.setAcceptDrops(True)
@@ -316,6 +320,9 @@ class App(QMainWindow):
         body.addWidget(self.status)
         actions = QHBoxLayout()
         actions.addWidget(button('View log', lambda: self.open_path(DATA / 'conversion.log')))
+        self.retry_button = button('Retry model download', self.retry_download)
+        self.retry_button.hide()
+        actions.addWidget(self.retry_button)
         actions.addStretch()
         self.cancel_button = button('Cancel', self.cancel)
         self.start_button = button('Create audio', self.start, 'primary')
@@ -366,6 +373,24 @@ class App(QMainWindow):
     def settings_saved(self, config):
         self.config = config
         self.notify('Settings saved.')
+        # Wait until the settings dialog closes before beginning a transfer.
+        QTimer.singleShot(0, lambda: self.setup_models([config['llm'], config['tts']]))
+
+    def retry_download(self):
+        self.setup_models(self.download_names, self.after_download)
+
+    def setup_models(self, names=DEFAULT_MODELS, after=None):
+        if self.process:
+            return
+        needed = missing_models(names)
+        if not needed:
+            self.retry_button.hide()
+            if after:
+                after()
+            return
+        self.download_names, self.after_download = needed, after
+        self.active = []
+        self.launch(dict(download_models=needed), 'download')
 
     def choose_documents(self):
         patterns = ' '.join('*' + ext for ext in sorted(SUPPORTED))
@@ -445,6 +470,7 @@ class App(QMainWindow):
             widget.setEnabled(not busy)
         self.start_button.setEnabled(not busy and any(not row['audio'] for row in self.rows))
         self.cancel_button.setEnabled(busy)
+        self.retry_button.setEnabled(not busy)
         for row in self.rows:
             row['remove'].setEnabled(not busy)
 
@@ -460,34 +486,46 @@ class App(QMainWindow):
                     raise ValueError(f'Missing {name}. Set it in Settings.')
             if not RUNTIME.is_file():
                 raise ValueError("The app's private environment is missing. Reinstall PDF to Audio.")
-            self.terminal_event = None
-            self.cancelling = False
-            self.stdout_buffer = b''
-            self.process = process = QProcess(self)
-            process.setStandardErrorFile(str(DATA / 'conversion.log'), QIODevice.OpenModeFlag.Append)
-            environment = QProcessEnvironment.systemEnvironment()
-            environment.insert('HF_HUB_OFFLINE', '1')
-            environment.insert('TOKENIZERS_PARALLELISM', 'false')
-            process.setProcessEnvironment(environment)
-            request = json.dumps(dict(config=self.config, files=[row['path'] for row in self.active])) + '\n'
-
-            def started():
-                process.write(request.encode('utf-8'))
-                process.closeWriteChannel()
-
-            process.started.connect(started)
-            process.readyReadStandardOutput.connect(self.read_worker)
-            process.finished.connect(self.exited)
-            process.errorOccurred.connect(self.process_error)
+            names = [self.config['tts']]
+            if any(Path(row['path']).suffix.lower() == '.pdf' for row in self.active):
+                names.append(self.config['llm'])
+            if missing_models(names):
+                self.setup_models(names, self.start)
+                return
             for row in self.active:
                 row['fraction'] = 0
                 row['status'].setText('Queued')
-            command = worker_command()
-            process.start(command[0], command[1:])
-            self.notify('Starting local conversion… First model load can take a little while.')
-            self.refresh()
+            self.launch(dict(config=self.config, files=[row['path'] for row in self.active]), 'conversion')
         except Exception as error:
             self.notify(str(error))
+
+    def launch(self, request, job):
+        self.job = job
+        self.terminal_event = None
+        self.cancelling = False
+        self.stdout_buffer = b''
+        self.retry_button.hide()
+        self.progress.setValue(0)
+        self.process = process = QProcess(self)
+        process.setStandardErrorFile(str(DATA / 'conversion.log'), QIODevice.OpenModeFlag.Append)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert('HF_HUB_OFFLINE', '1' if job == 'conversion' else '0')
+        environment.insert('TOKENIZERS_PARALLELISM', 'false')
+        process.setProcessEnvironment(environment)
+
+        def started():
+            process.write((json.dumps(request) + '\n').encode('utf-8'))
+            process.closeWriteChannel()
+
+        process.started.connect(started)
+        process.readyReadStandardOutput.connect(self.read_worker)
+        process.finished.connect(self.exited)
+        process.errorOccurred.connect(self.process_error)
+        command = worker_command()
+        process.start(command[0], command[1:])
+        self.notify('Preparing model download… Internet is needed only to install missing models.' if job == 'download'
+                    else 'Starting local conversion… First model load can take a little while.')
+        self.refresh()
 
     def read_worker(self):
         if self.process is None:
@@ -506,7 +544,12 @@ class App(QMainWindow):
         if not isinstance(event, dict):
             return super().event(event)
         kind = event['event']
-        if 'index' in event and 0 <= event['index'] < len(self.active):
+        if kind in ('download', 'models_ready'):
+            self.progress.setValue(round(1000 * event.get('fraction', 1)))
+            self.notify(event['message'])
+            if kind == 'models_ready':
+                self.terminal_event = kind
+        elif 'index' in event and 0 <= event['index'] < len(self.active):
             row = self.active[event['index']]
             row['status'].setText(event['message'])
             row['fraction'] = event.get('fraction', 1 if kind == 'error' else row['fraction'])
@@ -534,6 +577,7 @@ class App(QMainWindow):
             self.notify('Could not start the private worker: ' + self.process.errorString())
             self.process.deleteLater()
             self.process = None
+            self.retry_button.setVisible(self.job == 'download')
             self.refresh()
 
     def exited(self, code, _status):
@@ -542,22 +586,29 @@ class App(QMainWindow):
         if process:
             process.deleteLater()
         if self.cancelling:
-            self.notify('Cancelled. Completed passages are kept in the output folder.')
+            self.notify('Download cancelled. Partial files are kept; Retry resumes setup.' if self.job == 'download'
+                        else 'Cancelled. Completed passages are kept in the output folder.')
             for row in self.active:
                 if row['fraction'] < 1:
                     row['status'].setText('Cancelled')
         elif self.terminal_event is None:
-            self.notify(f'Conversion stopped (exit {code}). See View log for details.')
+            self.notify(f'{"Model download" if self.job == "download" else "Conversion"} stopped (exit {code}). See View log for details.')
+        ready = self.job == 'download' and self.terminal_event == 'models_ready' and code == 0 and not self.cancelling
+        self.retry_button.setVisible(self.job == 'download' and not ready)
         self.refresh()
         if self.closing:
             self.close()
+        elif ready and self.after_download:
+            callback, self.after_download = self.after_download, None
+            QTimer.singleShot(0, callback)
 
     def cancel(self):
         if self.process:
             self.cancelling = True
             process = self.process
             process.terminate()
-            self.notify('Stopping… Completed passages will be kept.')
+            self.notify('Stopping download… Partial files will be kept.' if self.job == 'download'
+                        else 'Stopping… Completed passages will be kept.')
             self.cancel_button.setEnabled(False)
 
             def force_stop():
@@ -576,6 +627,12 @@ class App(QMainWindow):
 
 
 class DesktopApplication(QApplication):
+    def __init__(self, args):
+        super().__init__(args)
+        if sys.platform.startswith('linux'):
+            from system_theme import SystemTheme
+            self.system_theme = SystemTheme(self)
+
     def event(self, event):
         if event.type() == QEvent.Type.FileOpen and hasattr(self, 'window'):
             self.window.add_files([event.file()])
@@ -597,6 +654,7 @@ def main():
     application.window = window = App()
     window.add_files([arg for arg in sys.argv[1:] if not arg.startswith('-')])
     window.show()
+    QTimer.singleShot(0, window.setup_models)
     return application.exec()
 
 

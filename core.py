@@ -155,7 +155,7 @@ def defaults():
                 voice=str(DATA / "assets/voice.wav"),
                 transcript=str(DATA / "assets/transcript.txt"),
                 prompt=str(DATA / "assets/prompt.txt"),
-                llm="Qwen/Qwen3-1.7B", tts="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+                llm="Qwen/Qwen3-0.6B", tts="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
                 voice_language="Auto", document_language="Auto", device="auto")
 
 

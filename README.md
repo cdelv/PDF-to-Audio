@@ -4,15 +4,19 @@ A desktop app that turns documents into locally generated speech, with one Pytho
 
 ## Install
 
-The intended Linux installer is **PDF-to-Audio.flatpak**. The shared Qt interface is implemented; Flatpak validation and native Windows/macOS packaging are in progress. Do not treat the source checkout as a finished one-click installer yet. Windows and macOS have not yet been live-tested.
+The intended Linux installer is **PDF-to-Audio.flatpakref**, a small file pointing to a hosted app repository. The shared Qt interface is implemented; full Flatpak validation, repository hosting, and native Windows/macOS packaging are in progress. Do not treat the source checkout as a finished one-click installer yet. Windows and macOS have not yet been live-tested.
 
-Once a bundle is available:
+Once the installer and repository are published:
 
 1. Make sure Flatpak support is installed through your distribution's Software application. GNOME Software and KDE Discover may require their Flatpak plugin.
-2. Double-click **PDF-to-Audio.flatpak**, then select **Install**. Allow the Software application to download the Freedesktop runtime if needed.
+2. Double-click **PDF-to-Audio.flatpakref**, then select **Install**. The Software application downloads the app, the two default models, and the Freedesktop runtime if needed.
 3. Open **PDF to Audio** from the application menu.
 
-The bundle is designed to contain its private Python environment, inference dependencies, CUDA user-space libraries, four selectable Qwen models, and a sample voice. No pip commands, environment editing, model accounts, or API keys are needed by the end user. Models make the download substantially larger than the GUI itself. Internet access is needed to install missing Flatpak runtimes; narration runs offline.
+The bundle contains the private Python environment, inference dependencies, CUDA user-space libraries, and a sample voice—**no model weights**. Flatpak downloads and checksum-verifies just the **Qwen3-0.6B cleanup** and **Qwen3-TTS-0.6B Base speech** models during installation, directly from their pinned Hugging Face revisions. Together these downloads are about **4.04 GB (3.76 GiB)**, in addition to the app and any missing Flatpak runtime. No pip commands, environment editing, model accounts, or API keys are needed by the end user. CUDA dependencies still make the app bundle substantial.
+
+The **1.7B models are optional**. Select one under **Settings → Models** and save; if it is missing, the app downloads it with progress and a Cancel button. **Retry model download** resumes interrupted transfers. Already installed models are reused. Downloads are checksum-verified before use; narration works offline once the selected models are available. Documents and voice recordings are not uploaded.
+
+Flatpak uses its [extra-data installation mechanism](https://docs.flatpak.org/en/latest/flatpak-command-reference.html#flatpak-build-finish), not model files embedded in the app repository. A repository-backed `.flatpakref` is required: a standalone bundle without embedded extra data failed our installation probe. Install-time defaults live read-only under `/app/extra/models`; optional downloads live in the app's private data directory. The shared GUI also automatically sets up missing defaults on first launch, covering source/native launches and recovery. Native Windows/macOS installers remain unfinished.
 
 **An NVIDIA host driver is required for GPU acceleration.** Flatpak can supply matching user-space driver extensions, but it cannot install or replace the host's kernel driver. Neither can an ordinary Docker container. Without a compatible driver, Automatic uses the CPU. Install the host driver using your distribution's supported driver manager; a reboot or Secure Boot enrollment may be required. See [NVIDIA's prerequisites](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) and [Flatpak driver extensions](https://docs.flatpak.org/en/latest/extension.html).
 
@@ -67,7 +71,7 @@ Qwen3-TTS has token-based context limits, **not a 500,000-character speech capac
 
 ## Build the Flatpak — maintainers
 
-End users should receive the built `.flatpak` file, not run these commands. A build machine needs Python 3, Flatpak, internet access, and substantial free disk space for runtimes, CUDA wheels, models, the build tree, and the bundle.
+End users should receive the `.flatpakref` file, not run these commands. A build machine needs Python 3, Flatpak, internet access, and substantial free disk space for runtimes, CUDA wheels, the build tree, and the app repository. Model weights are not needed to build.
 
 ```sh
 git clone https://github.com/cdelv/PDF-to-Audio.git
@@ -75,20 +79,24 @@ cd PDF-to-Audio
 python3 tools/build_flatpak.py
 ```
 
-The script installs the Freedesktop 25.08 build/runtime dependencies noninteractively, creates the private environment inside the build sandbox, installs pinned top-level inference packages, checks their dependencies, fetches pinned model revisions, and exports `dist/PDF-to-Audio.flatpak`. It never installs host kernel drivers. A read-only existing Hugging Face cache can be reused with `--reuse-model-cache /path/to/hub`; the resulting bundle contains independent copies, not links to that cache. `--sdk` can select an already installed compatible SDK on a development machine.
+The script installs the Freedesktop 25.08 build/runtime dependencies noninteractively, creates the private environment inside the build sandbox, installs pinned top-level inference packages, checks their dependencies, adds URLs/sizes/SHA-256 checksums for the two default models, and exports `dist/repo`. It does not download or embed model weights and never installs host kernel drivers. `--sdk` can select an already installed compatible SDK on a development machine. A build directory containing old bundled models is rejected; use a fresh `--workdir` instead.
 
-For unattended installation of a built bundle on a machine with Flatpak:
+Serve `dist/repo` on an HTTPS static host and pass its URL as `--repo-url https://your-host.example/pdf-to-audio/repo` to generate `dist/PDF-to-Audio.flatpakref`. That is a placeholder, not a published download URL. Production hosting and repository signing still need to be configured; current development exports are unsigned.
+
+`packaging/models.json` pins revisions; `packaging/model-files.json` records the corresponding files and checksums for all four choices. Maintainers can refresh that metadata with `.venv/bin/python packaging/prepare_model_sources.py` (only metadata/small configuration files are fetched, not weights). `packaging/download_models.py` is an unattended setup entry point for native installer integration; without arguments it installs only the two defaults.
+
+For unattended installation once the repository is published, on a machine with Flatpak:
 
 ```sh
-flatpak install --user --noninteractive -y dist/PDF-to-Audio.flatpak
+flatpak install --user --noninteractive -y dist/PDF-to-Audio.flatpakref
 flatpak run io.github.pdftoaudio.Desktop
 ```
 
-The sandbox has no inference-time network permission. App files and the private environment are mounted read-only. It uses the Freedesktop runtime, GPU-device access, document read access, and Music-folder write access; file selection uses desktop portals. Flatpak keeps settings under `~/.var/app/io.github.pdftoaudio.Desktop/`. Removing the package does not require editing system Python.
+The sandbox permits network access for optional model downloads. The inference worker resolves local model folders and uses offline Hugging Face mode; it does not download models or upload documents. App files and the private environment are mounted read-only. It uses the Freedesktop runtime, GPU-device access, document read access, and Music-folder write access; file selection uses desktop portals. Flatpak keeps settings and optional models under `~/.var/app/io.github.pdftoaudio.Desktop/`. Removing the package does not require editing system Python.
 
 ### Clean-container installation test
 
-The Dockerfile starts with a minimal Debian installation, not the developer's Python environment. Use Docker or the Docker-compatible Podman engine. The test mounts only the bundle and test scripts, not host models, Python packages, or GPU devices.
+The Dockerfile starts with a minimal Debian installation, not the developer's Python environment. Use Docker or the Docker-compatible Podman engine. The test mounts only the model-free app repository and test scripts, not host models, Python packages, or GPU devices. It serves the repository on localhost inside the container; the model downloads come from Hugging Face.
 
 ```sh
 podman build -f packaging/Dockerfile.test -t pdf-to-audio-install-test .
@@ -97,7 +105,7 @@ podman run --rm --security-opt seccomp=unconfined \
   pdf-to-audio-install-test
 ```
 
-The relaxed container seccomp policy permits nested Flatpak/bubblewrap namespaces; it does not grant host GPU access. The test installs noninteractively, checks bundled models and dependencies offline, runs short CPU cleanup and voice cloning, and launches the GUI in a virtual display. It does not emulate a complete GNOME/KDE desktop, Secure Boot, or a driver-free GPU.
+The relaxed container seccomp policy permits nested Flatpak/bubblewrap namespaces; it does not grant host GPU access. The test installs noninteractively (including the separate default-model downloads), checks that both defaults and no optional models are available offline, runs short CPU cleanup and voice cloning, and launches the GUI in a virtual display. It does not emulate a complete GNOME/KDE desktop, Secure Boot, or a driver-free GPU. The full application bundle/container test remains pending; unit and GUI tests cover the new model installation flow.
 
 ## Development and testing
 
@@ -108,6 +116,7 @@ For an already configured Linux source checkout, `python3 install.py` registers 
 .venv/bin/python tests/appearance_smoke.py
 .venv/bin/python tests/smoke.py
 .venv/bin/python tests/gui_smoke.py
+.venv/bin/python tests/download_gui_smoke.py
 .venv/bin/python tests/multilingual_smoke.py
 .venv/bin/python tests/corpus_check.py /path/to/papers --stage extract
 .venv/bin/python tests/corpus_check.py /path/to/papers --stage clean --sample --small --cap-gib 3
@@ -115,5 +124,7 @@ For an already configured Linux source checkout, `python3 install.py` registers 
 ```
 
 The Qt appearance test checks light/dark palettes, red VRAM warnings, and settings persistence. The GUI smoke test checks drag-and-drop, worker communication, and cancellation with a stub; add `--audio` to generate a short real TXT recording. Neither requires the user's PDF collection.
+
+The download GUI test exercises first setup, optional-model selection, failure, cancellation, retry, and offline reuse with tiny fixtures. `.venv/bin/python tests/flatpak_download_smoke.py` installs and removes a separate probe app using real configuration-file downloads and the production extra-data hook; it needs the development SDK/runtime and does not download model weights or change the main app.
 
 Corpus tests write only into ignored `test-output/corpus`, leaving the input PDFs untouched. `--sample` tests excerpts, not complete audiobooks. Omit it for whole-document conversion. `--cap-gib` caps PyTorch allocations; it is not physical GPU emulation and does not include every driver allocation.
