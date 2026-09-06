@@ -28,4 +28,4 @@ Windows/macOS files are unsigned and macOS is not notarized, so the OS may displ
 
 Release validation: Linux and Windows installers are tested automatically. Final macOS installer validation is deferred to manual testing; the preceding macOS build passed CPU narration, but failed Metal inference on the virtual GPU.
 
-Scanned PDFs need OCR first. Review important narration for extraction/cleanup errors. Resume applies to conversions started with this version and requires unchanged document, voice, model, language, and cleanup prompt. Completed passages are kept; an interrupted batch is regenerated.
+Scanned PDFs need OCR first. Review important narration for extraction/cleanup errors. Resume requires an unchanged document, voice, language, and cleanup prompt. Models can change: completed cleanup and audio are kept, while new models handle unfinished work. An interrupted batch is regenerated; switching speech models may change the sound of later passages.

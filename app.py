@@ -583,9 +583,7 @@ class App(QMainWindow):
                     raise ValueError(f'Missing {name}. Set it in Settings.')
             if not RUNTIME.is_file():
                 raise ValueError("The app's private environment is missing. Reinstall PDF to Audio.")
-            names = [self.config['tts']]
-            if any(Path(row['path']).suffix.lower() == '.pdf' for row in self.active):
-                names.append(self.config['llm'])
+            names = [self.config['llm'], self.config['tts']]
             if missing_models(names) or not runtime_ready(self.config['device']):
                 self.setup_models(names, self.start)
                 return

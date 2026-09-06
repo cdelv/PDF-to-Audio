@@ -16,6 +16,8 @@ Turn PDFs and text documents into spoken audio on your own computer. Drop files 
 
 Documents and voice recordings stay on your computer. The two default **0.6B models** download during setup—about **4 GB** combined—and then work offline. Optional **1.7B models** download only when selected and saved in Settings. Scanned PDFs need OCR first; complex documents may need a review of the extracted text.
 
+You can change models before resuming: completed cleanup and audio are kept, and the new models handle only unfinished work. Switching speech models may change the sound of later passages.
+
 ## Installation
 
 Download the installer for your desktop below. No Python, Git, or terminal setup is required. Open the app after installing and let setup finish downloading its private runtime and the two default models. Allow several GB of free space for the runtime in addition to the models; CUDA needs more space than CPU.
