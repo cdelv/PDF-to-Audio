@@ -75,9 +75,13 @@ jobs:
           pattern: installer-*
           path: installers
           merge-multiple: true
-      - name: Prepare tested release for final hardware verification
+      - name: Publish installers to the existing release or prepare a new draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           (cd installers && sha256sum * > SHA256SUMS)
-          gh release create v0.2.0 installers/* --draft --target "$GITHUB_SHA" --title "PDF to Audio 0.2.0" --notes-file packaging/RELEASE_NOTES.md
+          if gh release view v0.2.0 >/dev/null 2>&1; then
+            gh release upload v0.2.0 installers/* --clobber
+          else
+            gh release create v0.2.0 installers/* --draft --target "$GITHUB_SHA" --title "PDF to Audio 0.2.0" --notes-file packaging/RELEASE_NOTES.md
+          fi
