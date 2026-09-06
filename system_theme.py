@@ -2,7 +2,6 @@
 from PySide6.QtCore import QObject, Slot, SLOT
 from PySide6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage, QDBusPendingCallWatcher, QDBusVariant
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
 
 
 class SystemTheme(QObject):

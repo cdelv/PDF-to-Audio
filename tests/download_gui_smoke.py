@@ -1,6 +1,5 @@
 """Exercise real download-worker protocol with tiny fixtures, never model weights."""
 import hashlib
-import json
 import os
 from pathlib import Path
 import sys

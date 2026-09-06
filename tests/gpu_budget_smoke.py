@@ -44,7 +44,7 @@ def main():
     parent.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix='4gib-', dir=parent))
     config = defaults()
-    config.update(output=str(output), device='cuda:0', batch_size=6,
+    config.update(output=str(output), device='cuda:0',
                   tts='Qwen/Qwen3-TTS-12Hz-0.6B-Base',
                   voice=str(ROOT / 'assets/voice.wav'),
                   transcript=str(ROOT / 'assets/transcript.txt'), prompt=str(ROOT / 'assets/prompt.txt'))
@@ -75,19 +75,12 @@ def main():
             assert self.model.model.device.type == 'cuda'
             assert self.batch_size == 6
             self.weight_address = next(self.model.model.parameters()).data_ptr()
-            self.generating = False
 
         def speak_batch(self, passages):
-            # Exercise production code but fail if its OOM/cap fallback recurses.
-            assert not self.generating, 'Batch reduction is forbidden in this test.'
             assert next(self.model.model.parameters()).data_ptr() == self.weight_address
-            self.generating = True
-            try:
-                result = super().speak_batch(passages)
-                assert self.batch_size == 6
-                return result
-            finally:
-                self.generating = False
+            result = super().speak_batch(passages)
+            assert self.batch_size == 6
+            return result
 
         def speak(self, *args, **kwargs):
             assert next(self.model.model.parameters()).data_ptr() == self.weight_address

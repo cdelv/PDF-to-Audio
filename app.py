@@ -1,6 +1,5 @@
 """One Qt desktop interface for Linux, Windows, and macOS."""
 import json
-import os
 from pathlib import Path
 import shutil
 import sys

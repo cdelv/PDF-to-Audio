@@ -9,10 +9,10 @@ from worker import Cleaner, Speaker, local_model
 from model_store import DEFAULT_MODELS, MODELS, missing_models
 
 import torch
-import transformers
-import qwen_tts
-import markitdown
-import soundfile
+import transformers  # noqa: F401 -- These imports are the dependency smoke test.
+import qwen_tts  # noqa: F401
+import markitdown  # noqa: F401
+import soundfile  # noqa: F401
 
 if '--dependencies-only' not in sys.argv:
     for name in DEFAULT_MODELS:
@@ -26,7 +26,6 @@ assert (ROOT / 'assets/voice.wav').is_file()
 print('Inference dependencies verified.' if '--dependencies-only' in sys.argv else 'Offline default models and inference dependencies verified.', flush=True)
 print('CUDA available:', torch.cuda.is_available(), flush=True)
 if '--cpu-inference' in sys.argv:
-    torch.set_num_threads(2)
     config = defaults()
     config.update(device='cpu', llm='Qwen/Qwen3-0.6B',
                   voice=str(ROOT / 'assets/voice.wav'), transcript=str(ROOT / 'assets/transcript.txt'),

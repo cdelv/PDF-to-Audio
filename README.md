@@ -12,7 +12,7 @@ Turn PDFs and text documents into spoken audio on your own computer. Drop files 
 - Narrate in each document's original language using a supplied or custom voice sample.
 - Clean PDF text with Qwen3, with instructions to preserve figure and table captions while omitting table contents.
 - Follow your desktop's light/dark appearance and manage voices, languages, and models through the GUI.
-- Track elapsed time, cancel safely, and resume saved conversions—even after closing the app. Larger GPUs batch speech passages automatically.
+- Track elapsed time, cancel safely, and resume saved conversions—even after closing the app. Speech uses batches of six on CPU and GPU, except GPUs below 4 GiB, which process one passage at a time. CPU inference uses all available threads.
 
 Documents and voice recordings stay on your computer. The two default **0.6B models** download during setup—about **4 GB** combined—and then work offline. Optional **1.7B models** download only when selected and saved in Settings. Scanned PDFs need OCR first; complex documents may need a review of the extracted text.
 

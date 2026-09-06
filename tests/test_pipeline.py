@@ -86,38 +86,27 @@ class HardwareTests(unittest.TestCase):
         self.assertEqual(model_label('custom/model', 4.0), ('custom/model — VRAM unknown', False))
         self.assertFalse(model_label('Qwen/Qwen3-1.7B', None)[1])
 
-    def test_four_gib_routing_and_older_cuda_dtype(self):
+    def test_automatic_cuda_selection_and_older_cuda_dtype(self):
         import torch
         from worker import model_options
         with patch('torch.cuda.is_available', return_value=True), \
-             patch('torch.cuda.mem_get_info', return_value=(4 * 2**30, 4 * 2**30)), \
              patch('torch.cuda.is_bf16_supported', return_value=False):
-            large = model_options({'device': 'auto'}, 'Qwen/Qwen3-1.7B')
-            small = model_options({'device': 'auto'}, 'Qwen/Qwen3-0.6B')
-            speech = model_options({'device': 'auto'}, 'Qwen/Qwen3-TTS-12Hz-0.6B-Base')
-        self.assertEqual(large['device_map'], 'cpu')
-        self.assertEqual(small['device_map'], 'cuda:0')
-        self.assertEqual(small['dtype'], torch.float16)
-        self.assertEqual(speech['device_map'], 'cuda:0')
+            options = model_options({'device': 'auto'})
+        self.assertEqual(options['device_map'], 'cuda:0')
+        self.assertEqual(options['dtype'], torch.float16)
 
 
 class PipelineTests(unittest.TestCase):
-    def test_speech_cap_retries_without_accepting_truncation(self):
-        import numpy as np
+    def test_speech_cap_is_reported_without_accepting_truncation_or_retrying(self):
         from worker import Speaker
         speaker = Speaker.__new__(Speaker)
         speaker.prompt = 'reference'
-        wave = np.ones(2400, dtype=np.float32)
-        generate = Mock(side_effect=[ValueError('Speech reached its generation limit.'),
-                                     ValueError('Speech reached its generation limit.'),
-                                     ([wave.copy()], 24000), ([wave.copy()], 24000)])
+        generate = Mock(side_effect=ValueError('Speech reached its generation limit.'))
         speaker.model = SimpleNamespace(generate_voice_clone=generate)
         text = 'The first sentence is complete. The second sentence is complete.'
-        output, rate = speaker.speak(text, 'English')
-        self.assertEqual(len(output), 4800)
-        self.assertEqual(rate, 24000)
-        texts = [call.kwargs['text'] for call in generate.call_args_list[2:]]
-        self.assertEqual(' '.join(texts), text)
+        with self.assertRaisesRegex(ValueError, 'generation limit'):
+            speaker.speak(text, 'English')
+        self.assertEqual(generate.call_count, 1)
 
     def test_failed_cleanup_keeps_source_with_a_warning(self):
         import torch
@@ -165,7 +154,8 @@ class PipelineTests(unittest.TestCase):
             events = []
             with patch('worker.Cleaner', side_effect=AssertionError('LLM must not run')), \
                  patch('worker.Speaker') as speaker, patch('worker.release_gpu'):
-                speaker.return_value.speak.return_value = (np.ones(2400, dtype=np.float32) * 0.1, 24000)
+                speaker.return_value.batch_size = 6
+                speaker.return_value.speak_batch.return_value = [(np.ones(2400, dtype=np.float32) * 0.1, 24000)]
                 speaker.return_value.voice_language = 'English'
                 run_batch(dict(output=str(root/'output')), [str(bad), str(text), str(text)],
                           lambda event, **data: events.append(dict(event=event, **data)))
@@ -231,10 +221,11 @@ class LanguageTests(unittest.TestCase):
             with patch('worker.Cleaner', side_effect=AssertionError('Text must bypass LLM')), \
                  patch('worker.Speaker') as speaker, patch('worker.release_gpu'):
                 speaker.return_value.voice_language = 'English'
-                speaker.return_value.speak.return_value = (np.ones(100, dtype=np.float32)*0.1, 24000)
+                speaker.return_value.batch_size = 6
+                speaker.return_value.speak_batch.return_value = [(np.ones(100, dtype=np.float32)*0.1, 24000)]
                 run_batch(dict(output=str(root/'out'), document_language='Auto', voice_language='English'), files,
                           lambda event, **data: events.append(dict(event=event, **data)))
-                self.assertEqual([c.kwargs['language'] for c in speaker.return_value.speak.call_args_list],
+                self.assertEqual([c.args[0][0]['language'] for c in speaker.return_value.speak_batch.call_args_list],
                                  ['English', 'Spanish', 'French'])
             self.assertEqual(events[-1], dict(event='finished', completed=3, failed=0))
 

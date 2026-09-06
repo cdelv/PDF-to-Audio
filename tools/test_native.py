@@ -1,7 +1,6 @@
 """Install/unpack release artifacts and exercise the packaged executables."""
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 

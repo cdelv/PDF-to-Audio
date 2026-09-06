@@ -14,9 +14,9 @@ import weakref
 # Isolated Python ignores user site-packages, PYTHONPATH, and the working
 # directory. Only this app's own modules are added to its private runtime.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from core import BOUNDARY, ROOT, SUPPORTED, cleanup_chunks, omit_tables, plain_text, speech_plan, split_text
+from core import SUPPORTED, cleanup_chunks, omit_tables, plain_text, speech_plan
 from languages import check_cleanup_language, detect_language, resolve_language
-from hardware import MODEL_VRAM, speech_batch_size
+from hardware import batch_size
 from model_store import local_model
 from checkpoints import atomic_json, digest, open_job, valid_audio
 
@@ -40,19 +40,15 @@ def release_gpu():
         torch.cuda.empty_cache()
 
 
-def model_options(config, model=None):
+def model_options(config):
     import torch
     device = config.get("device", "auto")
     if device == "auto":
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        if device != "cpu":
-            free, total = torch.cuda.mem_get_info()
-            required = MODEL_VRAM.get(model, 6.0) * 2**30
-            if required > min(free, total - 512 * 2**20):
-                print(f"{model}: insufficient free VRAM; using CPU. Choose a smaller model for GPU acceleration.", file=sys.stderr)
-                device = "cpu"
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA is unavailable. Select CPU or Automatic in Settings.")
+    if device == 'cpu':
+        torch.set_num_threads(os.cpu_count() or 1)
     # Local cache only: document conversion never needs an Internet connection.
     dtype = torch.float32 if device == "cpu" else (
         torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
@@ -65,7 +61,7 @@ class Cleaner:
         from transformers import AutoModelForCausalLM, AutoTokenizer
         path = local_model(config["llm"])
         self.tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
-        self.model = AutoModelForCausalLM.from_pretrained(path, **model_options(config, config["llm"]))
+        self.model = AutoModelForCausalLM.from_pretrained(path, **model_options(config))
         self.prompt = Path(config["prompt"]).read_text(encoding="utf-8").strip()
         if not self.prompt:
             raise ValueError("The cleanup prompt is empty. Edit it in Settings.")
@@ -96,15 +92,14 @@ class Cleaner:
         import torch
         try:
             # A detection hint must never become a translation instruction.
-            language_rule = "Keep every source passage in its actual original language. Never translate, even when passages use different languages."
+            language_rule = "Keep each passage in its original language. Do not translate prose into a different language."
             source_language = detect_language(part)
             if source_language in ("Auto",) or len(part.split()) < 30:
                 source_language = language
             if source_language != "Auto":
-                language_rule += f" The detected source language is {source_language}; retain {source_language} wording."
+                language_rule += f" The detected source language is {source_language}."
             messages = [{"role": "system", "content": self.prompt + "\n\n" + language_rule},
-                        {"role": "user", "content": "Document excerpt:\n<document>\n" + part + "\n</document>\n\n"
-                         + "Return the cleaned excerpt only. " + language_rule}]
+                        {"role": "user", "content": "Document excerpt:\n<document>\n" + part + "\n</document>"}]
             chat = self.tokenizer.apply_chat_template(messages, tokenize=False,
                                                       add_generation_prompt=True, enable_thinking=False)
             inputs = self.tokenizer(chat, return_tensors="pt").to(self.model.device)
@@ -181,18 +176,13 @@ class Speaker:
         self.voice_language = resolve_language(transcript, config.get("voice_language", "Auto"), "Voice sample transcript")
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
-        self.model = Qwen3TTSModel.from_pretrained(local_model(config["tts"]), **model_options(config, config["tts"]))
+        self.model = Qwen3TTSModel.from_pretrained(local_model(config["tts"]), **model_options(config))
         self.prompt = self.model.create_voice_clone_prompt(ref_audio=(audio, rate), ref_text=transcript)
         tokenizer = self.model.model.speech_tokenizer
         tokenizer.decode = serial_audio_decoder(tokenizer)
-        self.batch_size = 1
         import torch
-        if self.model.model.device.type == 'cuda':
-            free, total = torch.cuda.mem_get_info()
-            self.batch_size = speech_batch_size(config['tts'], free, total)
-        requested = int(config.get('batch_size', 0))
-        if requested:
-            self.batch_size = min(self.batch_size, max(1, requested))
+        device = self.model.model.device
+        self.batch_size = batch_size(torch.cuda.get_device_properties(device).total_memory if device.type == 'cuda' else None)
         # Qwen infers the reference language from ref_audio/ref_text. It exposes
         # only a target-text language argument, never a separate reference tag.
         # The public audio API discards token counts. Check the underlying result
@@ -211,29 +201,7 @@ class Speaker:
         self.prompt = self.model = None
 
     def speak(self, text, language="Auto"):
-        import numpy as np
-        # A sampled generation can loop even on an otherwise valid passage.
-        # Retry once, then use smaller complete sentences; never accept a cap.
-        for attempt in range(2):
-            try:
-                waves, rate = self.model.generate_voice_clone(text=text.strip(), language=language,
-                    voice_clone_prompt=self.prompt, max_new_tokens=2048)
-                break
-            except ValueError as error:
-                if "generation limit" not in str(error):
-                    raise
-        else:
-            ends = [m.end() for m in BOUNDARY.finditer(text) if text[:m.end()].strip() and text[m.end():].strip()]
-            if not ends:
-                raise ValueError("Speech repeatedly reached its generation limit on one long sentence. "
-                                 "Add a paragraph break or simplify the sentence and retry.") from None
-            end = min(ends, key=lambda point: abs(point - len(text) / 2))
-            pieces = [text[:end], text[end:]]
-            rendered = [self.speak(piece, language) for piece in pieces if piece.strip()]
-            if len({rate for _, rate in rendered}) != 1:
-                raise ValueError("Retried speech passages have incompatible sample rates.")
-            return np.concatenate([wave for wave, _ in rendered]), rendered[0][1]
-        return self.finish_wave(waves[0], rate), rate
+        return self.speak_batch([dict(text=text, language=language)])[0]
 
     @staticmethod
     def finish_wave(wave, rate):
@@ -249,29 +217,12 @@ class Speaker:
         return wave
 
     def speak_batch(self, passages):
-        import torch
-        if len(passages) == 1:
-            return [self.speak(passages[0]['text'], passages[0]['language'])]
-        fallback = False
-        try:
-            waves, rate = self.model.generate_voice_clone(
-                text=[p['text'].strip() for p in passages], language=[p['language'] for p in passages],
-                voice_clone_prompt=self.prompt, max_new_tokens=2048)
-            if len(waves) != len(passages):
-                raise ValueError('Speech batch returned an incorrect number of recordings.')
-            return [(self.finish_wave(wave, rate), rate) for wave in waves]
-        except torch.OutOfMemoryError:
-            self.batch_size = max(1, len(passages) // 2)
-            fallback = True
-        except ValueError as error:
-            if 'generation limit' not in str(error):
-                raise
-            fallback = True
-        if fallback:
-            # Retry outside the exception handler so its traceback releases GPU tensors.
-            release_gpu()
-            middle = max(1, len(passages) // 2)
-            return self.speak_batch(passages[:middle]) + self.speak_batch(passages[middle:])
+        waves, rate = self.model.generate_voice_clone(
+            text=[p['text'].strip() for p in passages], language=[p['language'] for p in passages],
+            voice_clone_prompt=self.prompt, max_new_tokens=2048)
+        if len(waves) != len(passages):
+            raise ValueError('Speech batch returned an incorrect number of recordings.')
+        return [(self.finish_wave(wave, rate), rate) for wave in waves]
 
 
 def stitch(paths, target):
@@ -380,12 +331,12 @@ def _run_batch(config, files, emit, resume, locks):
                     atomic_json(folder / 'languages.json', dict(document_language=plan[0]['language'], voice_language=speaker.voice_language))
                 done = len(plan) - len(pending)
                 while pending:
-                    count = getattr(speaker, 'batch_size', 1)
+                    count = speaker.batch_size
                     numbers = pending[:count]
                     emit('progress', index=index, fraction=0.25 + 0.7 * done / len(plan),
                          message=f'Speaking · {done}/{len(plan)} complete · batch of {len(numbers)}')
                     batch = [plan[number] for number in numbers]
-                    rendered = speaker.speak_batch(batch) if len(batch) > 1 else [speaker.speak(batch[0]['text'], language=batch[0]['language'])]
+                    rendered = speaker.speak_batch(batch)
                     for number, (wave, rate) in zip(numbers, rendered, strict=True):
                         path = paths[number]
                         temporary = path.with_suffix('.partial.flac')

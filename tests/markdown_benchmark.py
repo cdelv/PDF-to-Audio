@@ -10,7 +10,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--sequential', action='store_true')
     parser.add_argument('files', nargs='+')
     args = parser.parse_args()
     import torch
@@ -21,8 +20,6 @@ def main():
     config.update(output=str(output), tts='Qwen/Qwen3-TTS-12Hz-1.7B-Base', device='cuda:0',
                   voice=str(ROOT / 'assets/voice.wav'), transcript=str(ROOT / 'assets/transcript.txt'),
                   prompt=str(ROOT / 'assets/prompt.txt'))
-    if args.sequential:
-        config['batch_size'] = 1
     files = [str(Path(name).resolve()) for name in args.files]
     if not files or any(Path(name).suffix != '.md' for name in files):
         raise SystemExit('Pass one or more Markdown paths.')

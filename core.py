@@ -168,16 +168,13 @@ def load_settings():
             shutil.copy2(source, target)
     config = defaults()
     if CONFIG.exists():
-        config.update(json.loads(CONFIG.read_text()))
-    # The old setting forced every document to English by default. Original-
-    # language narration now detects each file independently, including upgrades.
-    config.pop("language", None)
-    config.pop("python", None)
+        config.update({key: value for key, value in json.loads(CONFIG.read_text()).items() if key in config})
     return config
 
 
 def save_settings(config):
-    config = {key: value for key, value in config.items() if key != "python"}
+    known = defaults()
+    config = {key: value for key, value in config.items() if key in known}
     CONFIG.parent.mkdir(parents=True, exist_ok=True)
     temp = CONFIG.with_suffix(".tmp")
     temp.write_text(json.dumps(config, indent=2) + "\n")

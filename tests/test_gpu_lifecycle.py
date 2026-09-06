@@ -6,17 +6,22 @@ from unittest.mock import patch
 
 import numpy as np
 
-from hardware import speech_batch_size
-from worker import Cancelled, Cleaner, Speaker, run_batch, serial_audio_decoder
+from hardware import batch_size
+from worker import Cancelled, Cleaner, Speaker, model_options, run_batch, serial_audio_decoder
 
 
 class GpuLifecycleTests(unittest.TestCase):
-    def test_small_model_batches_six_on_four_gib_with_headroom(self):
-        gib = 2**30
-        model = 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
-        self.assertEqual(speech_batch_size(model, 1.3 * gib, 4 * gib), 6)
-        self.assertEqual(speech_batch_size(model, 0.5 * gib, 4 * gib), 1)
-        self.assertEqual(speech_batch_size('Qwen/Qwen3-TTS-12Hz-1.7B-Base', 1.3 * gib, 4 * gib), 1)
+    def test_cpu_uses_all_available_threads(self):
+        for count, expected in ((16, 16), (2, 2), (None, 1)):
+            with patch('os.cpu_count', return_value=count), patch('torch.set_num_threads') as setter:
+                self.assertEqual(model_options({'device': 'cpu'})['device_map'], 'cpu')
+                setter.assert_called_once_with(expected)
+
+    def test_fixed_batch_size_with_only_the_small_gpu_exception(self):
+        self.assertEqual(batch_size(), 6)
+        self.assertEqual(batch_size(4 * 2**30 - 1), 1)
+        self.assertEqual(batch_size(4 * 2**30), 6)
+        self.assertEqual(batch_size(12 * 2**30), 6)
 
     def test_serial_decoder_preserves_order_without_reference_cycle(self):
         class Tokenizer:
