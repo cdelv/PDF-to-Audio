@@ -81,7 +81,8 @@ def main():
                 pump()
                 window.event(dict(event='download', message='Downloading and installing dependencies…', fraction=None))
                 assert window.progress.maximum() == 0
-                assert 'Downloading torch' in window.setup_details.toPlainText()
+                from PySide6.QtWidgets import QPlainTextEdit
+                assert not window.setup_panel.findChildren(QPlainTextEdit)
                 assert 'Downloading torch' in (core.DATA / 'conversion.log').read_text()
                 assert window.cancel_button.isEnabled()
                 snapshot = core.ROOT / 'test-output/appearance/setup.png'

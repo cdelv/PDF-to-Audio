@@ -327,13 +327,6 @@ class App(QMainWindow):
         setup.addWidget(self.setup_heading)
         setup.addWidget(label('Preparing app dependencies and models, not creating audio. Downloads can total several GB. '
                               'Conversion controls unlock when setup finishes. You can cancel setup or close the window.', 'muted'))
-        self.setup_details = QPlainTextEdit()
-        self.setup_details.setReadOnly(True)
-        self.setup_details.setMaximumBlockCount(120)
-        self.setup_details.setFixedHeight(90)
-        self.setup_details.setPlaceholderText('Connecting to download servers… Download and installation details will appear here.')
-        self.setup_details.setAccessibleName('Download and installation details')
-        setup.addWidget(self.setup_details)
         self.setup_panel.hide()
         body.addWidget(self.setup_panel)
         self.progress = QProgressBar()
@@ -618,7 +611,6 @@ class App(QMainWindow):
         self.retry_button.hide()
         self.setup_panel.setVisible(job == 'download')
         self.setup_heading.setText('Setup — downloading and installing')
-        self.setup_details.clear()
         self.timer_label.setVisible(job != 'download')
         self.progress.setRange(0, 0 if job == 'download' else 1000)
         self.progress.setValue(0)
@@ -654,9 +646,6 @@ class App(QMainWindow):
                 log.write(data)
         except OSError:
             pass  # Keep the window responsive even when a log cannot be written.
-        if self.job == 'download':
-            self.setup_details.insertPlainText(data.decode('utf-8', errors='replace').replace('\r', '\n'))
-            self.setup_details.verticalScrollBar().setValue(self.setup_details.verticalScrollBar().maximum())
 
     def read_worker(self):
         if self.process is None:
