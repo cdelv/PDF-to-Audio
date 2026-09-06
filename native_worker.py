@@ -16,7 +16,7 @@ def check(inference=False, cuda=False, metal=False, gpu=False):
     from pdf_input import extract_pdf  # noqa: F401
     from core import ROOT, defaults
     from model_store import DEFAULT_MODELS, MODELS, missing_models
-    from worker import Cleaner, Speaker, model_options, release_gpu
+    from worker import Speaker, model_options, release_gpu, run_batch
     from hardware import virtual_metal
     assert all((ROOT / 'assets' / name).is_file() for name in ('voice.wav', 'transcript.txt', 'prompt.txt', 'icon.svg'))
     print('Dependencies and assets verified. CUDA:', torch.cuda.is_available(), flush=True)
@@ -50,12 +50,21 @@ def check(inference=False, cuda=False, metal=False, gpu=False):
         config = defaults()
         config.update(device='cuda:0' if gpu else 'mps' if metal else 'cpu', voice=str(ROOT / 'assets/voice.wav'),
                       transcript=str(ROOT / 'assets/transcript.txt'), prompt=str(ROOT / 'assets/prompt.txt'))
-        cleaner = Cleaner(config)
-        try:
-            assert cleaner.clean('Hello. This is an installation test.', lambda *_: None, 'English').strip()
-        finally:
-            cleaner.close()
-            release_gpu()
+        import tempfile
+        from checkpoints import valid_audio
+        with tempfile.TemporaryDirectory(prefix='pdf-to-audio-narration-test-') as directory:
+            source = Path(directory) / 'test.md'
+            source.write_text('Table 1. Robot comparison.\n\n| Platform | Value |\n|---|---|\n'
+                              + '| hidden_table_data | 12345 |\n' * 40
+                              + '\nHello. This is an installation test.', encoding='utf-8')
+            events = []
+            run_batch(dict(config, output=str(Path(directory) / 'audio')), [str(source)],
+                      lambda event, **data: events.append(dict(event=event, **data)))
+            assert events[-1] == dict(event='finished', completed=1, failed=0), events
+            folder = Path(next(event['folder'] for event in events if event['event'] == 'done'))
+            assert (folder / 'cleanup.json').is_file(), 'Markdown must pass through cleanup.'
+            assert 'hidden_table_data' not in (folder / 'narration.txt').read_text(encoding='utf-8')
+            assert valid_audio(folder / 'audio.flac')
         speaker = Speaker(config)
         try:
             count = speaker.batch_size

@@ -292,21 +292,23 @@ def _run_batch(config, files, emit, resume, locks):
                     (folder / "source.md").write_text(text, encoding="utf-8")
                     if not text.strip():
                         raise ValueError("This PDF contains no extractable text. Scanned PDFs need OCR first.")
-                    language = resolve_language(text, config.get("document_language", "Auto"))
-                    if cleaner is None:
-                        emit("progress", index=index, fraction=0.03, message="Loading Qwen3 text cleanup")
-                        cleaner = Cleaner(config)
-                    text = cleaner.clean(text, lambda n, total: emit("progress", index=index,
-                        fraction=0.05 + 0.2 * n / total, message=f"Cleaning {language} text · {n+1}/{total}"), language,
-                        checkpoint=folder / 'cleanup.json')
-                    if cleaner.warnings:
-                        (folder / "warnings.txt").write_text(
-                            "Some excerpts were retained in their original wording because model cleanup was unreliable. "
-                            "Review narration.txt for layout artifacts and unstructured table data.\n\n"
-                            + "\n\n".join(cleaner.warnings), encoding="utf-8")
                 else:
                     text = source.read_text(encoding="utf-8-sig")
-                    language = resolve_language(plain_text(text), config.get("document_language", "Auto"))
+                readable = plain_text(omit_tables(text))
+                if not readable:
+                    raise ValueError("This document has no readable text outside tables.")
+                language = resolve_language(readable, config.get("document_language", "Auto"))
+                if cleaner is None:
+                    emit("progress", index=index, fraction=0.03, message="Loading Qwen3 text cleanup")
+                    cleaner = Cleaner(config)
+                text = cleaner.clean(text, lambda n, total: emit("progress", index=index,
+                    fraction=0.05 + 0.2 * n / total, message=f"Cleaning {language} text · {n+1}/{total}"), language,
+                    checkpoint=folder / 'cleanup.json')
+                if cleaner.warnings:
+                    (folder / "warnings.txt").write_text(
+                        "Some excerpts were retained in their original wording because model cleanup was unreliable. "
+                        "Review narration.txt for layout artifacts and unstructured table data.\n\n"
+                        + "\n\n".join(cleaner.warnings), encoding="utf-8")
                 text = plain_text(text)
                 if not text:
                     raise ValueError("This document has no readable text.")

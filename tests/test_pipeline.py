@@ -97,6 +97,48 @@ class HardwareTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_every_format_uses_shared_cleanup_before_speech(self):
+        import numpy as np
+        from worker import Cleaner, run_batch
+        text = ('Figure 1. Robot motion.\n\nTable 1. Platform comparison.\n\n'
+                '| Platform | Mechanism |\n|---|---|\n' + '| hidden table data | values |\n' * 60
+                + '\nSurrounding prose stays in the narration.')
+        cleaner = Cleaner.__new__(Cleaner)
+        cleaner.clean_part = Mock(side_effect=lambda part, _language: core.plain_text(part))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = []
+            for extension in sorted(core.SUPPORTED):
+                source = root / ('document' + extension)
+                source.write_text(text, encoding='utf-8')
+                files.append(str(source))
+            events = []
+            with patch('worker.Cleaner', return_value=cleaner) as load, \
+                 patch('pdf_input.extract_pdf', return_value=text) as extract, \
+                 patch('worker.Speaker') as speaker, patch('worker.release_gpu'):
+                speaker.return_value.batch_size = 6
+                speaker.return_value.voice_language = 'English'
+                speaker.return_value.speak_batch.side_effect = lambda parts: [
+                    (np.ones(2400, dtype=np.float32) * 0.1, 24000) for _ in parts]
+                run_batch(dict(output=str(root / 'out')), files,
+                          lambda event, **data: events.append(dict(event=event, **data)))
+            self.assertEqual(events[-1], dict(event='finished', completed=len(files), failed=0))
+            load.assert_called_once()
+            extract.assert_called_once_with(root / 'document.pdf')
+            self.assertEqual(cleaner.clean_part.call_count, len(files))
+            for call in cleaner.clean_part.call_args_list:
+                self.assertNotIn('hidden table data', call.args[0])
+            for event in events:
+                if event['event'] != 'done':
+                    continue
+                folder = Path(event['folder'])
+                self.assertTrue((folder / 'cleanup.json').is_file())
+                narration = (folder / 'narration.txt').read_text()
+                self.assertIn('Table 1. Platform comparison.', narration)
+                self.assertIn('Figure 1. Robot motion.', narration)
+                self.assertIn('Surrounding prose stays', narration)
+                self.assertNotIn('hidden table data', narration)
+
     def test_speech_cap_is_reported_without_accepting_truncation_or_retrying(self):
         from worker import Speaker
         speaker = Speaker.__new__(Speaker)
@@ -142,7 +184,7 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(np.all(wave[:1234] == 0.25))
             self.assertTrue(np.all(wave[1234:] == -0.25))
 
-    def test_batch_skips_llm_for_text_and_continues_after_failure(self):
+    def test_batch_cleans_text_and_continues_after_failure(self):
         import numpy as np
         from worker import run_batch
         with tempfile.TemporaryDirectory() as directory:
@@ -152,7 +194,9 @@ class PipelineTests(unittest.TestCase):
             bad = root/'bad.txt'
             bad.write_bytes(b'\xff\xfe\x00')
             events = []
-            with patch('worker.Cleaner', side_effect=AssertionError('LLM must not run')), \
+            cleaner = Mock(warnings=[])
+            cleaner.clean.side_effect = lambda text, *_a, **_k: text
+            with patch('worker.Cleaner', return_value=cleaner) as load_cleaner, \
                  patch('worker.Speaker') as speaker, patch('worker.release_gpu'):
                 speaker.return_value.batch_size = 6
                 speaker.return_value.speak_batch.return_value = [(np.ones(2400, dtype=np.float32) * 0.1, 24000)]
@@ -160,6 +204,9 @@ class PipelineTests(unittest.TestCase):
                 run_batch(dict(output=str(root/'output')), [str(bad), str(text), str(text)],
                           lambda event, **data: events.append(dict(event=event, **data)))
             self.assertEqual(events[-1], dict(event='finished', completed=2, failed=1))
+            load_cleaner.assert_called_once()
+            self.assertEqual(cleaner.clean.call_count, 2)
+            cleaner.close.assert_called_once()
             outputs = [e for e in events if e['event'] == 'done']
             self.assertNotEqual(outputs[0]['folder'], outputs[1]['folder'])
             for event in outputs:
@@ -218,7 +265,9 @@ class LanguageTests(unittest.TestCase):
                 path.write_text(self.examples[name])
                 files.append(str(path))
             events = []
-            with patch('worker.Cleaner', side_effect=AssertionError('Text must bypass LLM')), \
+            cleaner = Mock(warnings=[])
+            cleaner.clean.side_effect = lambda text, *_a, **_k: text
+            with patch('worker.Cleaner', return_value=cleaner), \
                  patch('worker.Speaker') as speaker, patch('worker.release_gpu'):
                 speaker.return_value.voice_language = 'English'
                 speaker.return_value.batch_size = 6
@@ -226,6 +275,8 @@ class LanguageTests(unittest.TestCase):
                 run_batch(dict(output=str(root/'out'), document_language='Auto', voice_language='English'), files,
                           lambda event, **data: events.append(dict(event=event, **data)))
                 self.assertEqual([c.args[0][0]['language'] for c in speaker.return_value.speak_batch.call_args_list],
+                                 ['English', 'Spanish', 'French'])
+                self.assertEqual([c.args[2] for c in cleaner.clean.call_args_list],
                                  ['English', 'Spanish', 'French'])
             self.assertEqual(events[-1], dict(event='finished', completed=3, failed=0))
 

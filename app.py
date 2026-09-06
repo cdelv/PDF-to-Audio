@@ -123,7 +123,7 @@ class SettingsDialog(QDialog):
         languages.addStretch()
 
         prompt = tab('Cleanup prompt')
-        prompt.addWidget(label('Instructions for PDF cleanup. Text files bypass this step.', 'muted'))
+        prompt.addWidget(label('Instructions for cleaning every document before narration.', 'muted'))
         self.prompt = editor(self.config['prompt'])
         prompt.addWidget(self.prompt, 1)
 
@@ -135,7 +135,7 @@ class SettingsDialog(QDialog):
         self.fields = {}
         for key, title, choices in (
             ('tts', 'Speech model', ['Qwen/Qwen3-TTS-12Hz-0.6B-Base', 'Qwen/Qwen3-TTS-12Hz-1.7B-Base']),
-            ('llm', 'PDF cleanup model', ['Qwen/Qwen3-0.6B', 'Qwen/Qwen3-1.7B']),
+            ('llm', 'Text cleanup model', ['Qwen/Qwen3-0.6B', 'Qwen/Qwen3-1.7B']),
             ('device', 'Processor', ['auto', 'mps', 'cpu'] if sys.platform == 'darwin' else ['auto', 'cuda:0', 'cpu']),
         ):
             models.addWidget(label(title))
@@ -335,7 +335,7 @@ class App(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.setFixedHeight(7)
         body.addWidget(self.progress)
-        self.status = label('Ready. PDFs are cleaned before narration; text files go straight to speech.', 'muted')
+        self.status = label('Ready. All documents are cleaned before narration; PDFs are extracted first.', 'muted')
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.addWidget(self.status)
         self.timer_label = label('Elapsed · 00:00:00', 'muted')
@@ -524,7 +524,7 @@ class App(QMainWindow):
             name = label(path.name)
             name.setToolTip(str(path))
             info.addWidget(name)
-            status = label('Queued · ' + ('PDF cleanup → narration' if path.suffix.lower() == '.pdf' else 'Direct narration'), 'muted')
+            status = label('Queued · ' + ('PDF extraction → cleanup → narration' if path.suffix.lower() == '.pdf' else 'Cleanup → narration'), 'muted')
             info.addWidget(status)
             content.addLayout(info, 1)
             row = dict(path=str(path), status=status, fraction=0, audio=None, folder=None, widget=card)

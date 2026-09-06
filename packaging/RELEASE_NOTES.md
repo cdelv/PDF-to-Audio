@@ -7,6 +7,8 @@ Convert PDFs and text documents into local, voice-cloned narration.
 - Cleanup and speech models run in separate stages and unload between them; audio decoding is sequential to reduce peak VRAM.
 - Elapsed conversion timer, saved queues, and resumable cleanup/audio generation.
 - Original-language narration for mixed-language document batches, with scientific cleanup instructions for acronyms, equations, and figure/table captions.
+- Every file goes through Qwen3 cleanup before narration; PDFs first go through text extraction. Table contents are omitted while captions are preserved.
+- First-launch setup shows download percentage and transferred bytes, with resumable runtime downloads.
 - Default 0.6B models download during first-launch setup; optional 1.7B models download from Settings.
 
 ### Install

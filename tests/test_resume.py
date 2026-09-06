@@ -22,7 +22,10 @@ class ResumeTests(unittest.TestCase):
             speaker = Mock(batch_size=1, voice_language='English')
             wave = np.ones(2400, dtype=np.float32) * 0.1
             speaker.speak_batch.side_effect = [[(wave, 24000)], [(wave, 24000)], Cancelled()]
-            with patch('worker.Speaker', return_value=speaker), patch('worker.release_gpu'):
+            cleaner = Mock(warnings=[])
+            cleaner.clean.side_effect = lambda text, *_a, **_k: text
+            with patch('worker.Speaker', return_value=speaker), patch('worker.release_gpu'), \
+                 patch('worker.Cleaner', return_value=cleaner):
                 with self.assertRaises(Cancelled):
                     run_batch(config, [str(source)], emit)
             folder = Path(next(e['folder'] for e in events if e.get('folder')))
@@ -32,7 +35,8 @@ class ResumeTests(unittest.TestCase):
             speaker.speak_batch.side_effect = None
             speaker.speak_batch.return_value = [(wave, 24000)]
             speaker.speak_batch.reset_mock()
-            with patch('worker.Speaker', return_value=speaker), patch('worker.release_gpu'):
+            with patch('worker.Speaker', return_value=speaker), patch('worker.release_gpu'), \
+                 patch('worker.Cleaner', side_effect=AssertionError('Resume must reuse prepared narration')):
                 run_batch(config, [str(source)], emit, {str(source): str(folder)})
             self.assertEqual(speaker.speak_batch.call_count, total - 2)
             self.assertEqual((first.read_bytes(), first.stat().st_mtime_ns), before)

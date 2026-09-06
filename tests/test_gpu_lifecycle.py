@@ -93,9 +93,9 @@ class GpuLifecycleTests(unittest.TestCase):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp:
                 events = []
                 root = Path(temp)
-                files = [root / 'first.pdf', root / 'second.pdf']
+                files = [root / 'first.pdf', root / 'second.md']
                 for path in files:
-                    path.write_bytes(b'PDF placeholder; extraction is mocked.')
+                    path.write_bytes(b'This is a sentence for narration. ' * 60)
 
                 class FakeCleaner:
                     warnings = []
