@@ -24,4 +24,6 @@ The Apple Silicon installer includes **CPU and experimental Apple Metal (PyTorch
 
 Windows/macOS files are unsigned and macOS is not notarized, so the OS may display a security warning or require explicit approval through its security settings. Do not disable system security globally.
 
+Release validation: Linux and Windows installers are tested automatically. Final macOS installer validation is deferred to manual testing; the preceding macOS build passed CPU narration, but failed Metal inference on the virtual GPU.
+
 Scanned PDFs need OCR first. Review important narration for extraction/cleanup errors. Resume applies to conversions started with this version and requires unchanged document, voice, model, language, and cleanup prompt. Completed passages are kept; an interrupted batch is regenerated.

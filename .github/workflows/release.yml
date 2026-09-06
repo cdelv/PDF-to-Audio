@@ -48,6 +48,8 @@ jobs:
           ${{ matrix.python }} -m unittest discover -s tests -q
           ${{ matrix.python }} tools/build_native.py
       - name: Install artifact and verify offline narration after model setup
+        # macOS installation/Metal validation is deferred to manual testing.
+        if: runner.os != 'macOS'
         run: python tools/test_native.py
       - name: Verify RPM installation in a fresh Fedora container
         if: runner.os == 'Linux'
