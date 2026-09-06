@@ -1,8 +1,0 @@
-FROM debian:trixie-slim
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends flatpak dbus-x11 xvfb xauth ca-certificates python3 && apt-get clean
-RUN useradd --create-home --uid 1000 tester
-USER tester
-WORKDIR /home/tester
-ENV XDG_RUNTIME_DIR=/tmp/flatpak-test-runtime
-CMD ["/bin/sh", "-ec", "mkdir -p /tmp/flatpak-test-runtime; chmod 700 /tmp/flatpak-test-runtime; exec dbus-run-session -- /bin/sh /test/container-test.sh"]

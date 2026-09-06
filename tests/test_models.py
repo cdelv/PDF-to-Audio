@@ -1,7 +1,5 @@
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import importlib.util
-import json
 from pathlib import Path
 import tempfile
 import threading
@@ -10,38 +8,24 @@ from unittest.mock import patch
 
 import core
 import model_store as store
-from packaging_sources import extra_data_args, write_flatpakref
 
 
 class ModelTests(unittest.TestCase):
-    def test_repository_installer(self):
-        with tempfile.TemporaryDirectory() as temp:
-            target = Path(temp) / 'app.flatpakref'
-            write_flatpakref(target, 'https://example.com/repo/')
-            self.assertIn('Url=https://example.com/repo\n', target.read_text())
-            self.assertIn('Branch=stable\n', target.read_text())
-            for url in ('file:///tmp/repo', 'https://example.com\nBranch=other'):
-                with self.assertRaises(ValueError):
-                    write_flatpakref(target, url)
-
-    def test_default_models_and_flatpak_sources(self):
+    def test_default_models_and_pinned_sources(self):
         config = core.defaults()
         self.assertEqual((config['llm'], config['tts']), store.DEFAULT_MODELS)
-        args = extra_data_args()
-        self.assertEqual(len(args), sum(len(store.MODELS[n]['files']) for n in store.DEFAULT_MODELS))
-        self.assertTrue(all('1.7B' not in arg for arg in args))
-        for arg in args:
-            _, digest, download, install, url = arg.split('=', 1)[1].split(':', 4)
-            self.assertEqual(len(digest), 64)
-            self.assertEqual(download, install)
-            self.assertTrue(url.startswith('https://huggingface.co/Qwen/'))
-        revisions = json.loads((core.ROOT / 'packaging/models.json').read_text())
-        self.assertEqual({n: m['revision'] for n, m in store.MODELS.items()}, revisions)
+        self.assertTrue(all('0.6B' in name for name in store.DEFAULT_MODELS))
+        self.assertEqual(len(store.MODELS), 4)
         for model in store.MODELS.values():
+            self.assertEqual(len(model['revision']), 40)
+            self.assertTrue(model['files'])
             for source in model['files']:
                 path = Path(source['path'])
                 self.assertFalse(path.is_absolute() or '..' in path.parts)
                 self.assertIn(model['revision'], source['url'])
+                self.assertEqual(len(source['sha256']), 64)
+                self.assertGreater(source['size'], 0)
+                self.assertTrue(source['url'].startswith('https://huggingface.co/Qwen/'))
 
     def test_partial_snapshot_is_not_installed(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -62,7 +46,6 @@ class ModelTests(unittest.TestCase):
         models = {n: dict(revision='pinned', files=[source]) for n in (*names, optional)}
         with tempfile.TemporaryDirectory() as temp, patch.object(store, 'MODELS', models), \
              patch.object(store, 'MODEL_HOME', Path(temp) / 'models'), \
-             patch.object(store, 'EXTRA_HOME', Path(temp) / 'extra'), \
              patch.dict('os.environ', {'HF_HUB_CACHE': temp + '/cache'}):
             downloaded = []
 
@@ -129,20 +112,6 @@ class ModelTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join()
-
-    def test_flatpak_apply_extra_arranges_downloads(self):
-        spec = importlib.util.spec_from_file_location('apply_extra_test', core.ROOT / 'packaging/apply_extra.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            relative = Path('models/Qwen--test/revision/config.json')
-            (root / 'source-0').write_text('{}')
-            with patch.object(module, 'sources', return_value=iter([('source-0', relative, dict(size=2))])):
-                module.install(root)
-            self.assertEqual((root / relative).read_text(), '{}')
-            self.assertFalse((root / 'source-0').exists())
-
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,7 +10,8 @@ from huggingface_hub import HfApi, hf_hub_url
 def main():
     root = Path(__file__).resolve().parent
     result = {}
-    for name, revision in json.loads((root / 'models.json').read_text()).items():
+    for name, model in json.loads((root / 'model-files.json').read_text()).items():
+        revision = model['revision']
         files = []
         for item in HfApi().model_info(name, revision=revision, files_metadata=True).siblings:
             if not (item.rfilename.endswith(('.json', '.safetensors', '.txt', '.model'))

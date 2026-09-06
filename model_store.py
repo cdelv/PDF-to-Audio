@@ -14,7 +14,6 @@ if not manifest_path.exists():
     manifest_path = ROOT / 'packaging/model-files.json'
 MODELS = json.loads(manifest_path.read_text())
 MODEL_HOME = DATA / 'models'
-EXTRA_HOME = Path('/app/extra/models')
 
 
 def complete(path, model, legacy=False):
@@ -34,9 +33,9 @@ def find_model(name):
     relative = Path(name.replace('/', '--')) / model['revision']
     hf_home = Path(os.environ.get('HF_HOME', Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'huggingface'))
     cache = Path(os.environ.get('HF_HUB_CACHE', hf_home / 'hub'))
-    for path in (MODEL_HOME / relative, EXTRA_HOME / relative):
-        if complete(path, model):
-            return str(path)
+    path = MODEL_HOME / relative
+    if complete(path, model):
+        return str(path)
     path = cache / ('models--' + name.replace('/', '--')) / 'snapshots' / model['revision']
     if complete(path, model, legacy=True):
         return str(path)

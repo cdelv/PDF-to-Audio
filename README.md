@@ -22,7 +22,7 @@ Documents and voice recordings stay on your computer. The two default **0.6B mod
 
 ### Linux
 
-The planned installer is a `.flatpakref` file. Until it is available, open a terminal and run:
+Until the native `.deb` and `.rpm` installers are published, open a terminal and run:
 
 ```sh
 git clone https://github.com/cdelv/PDF-to-Audio.git

@@ -24,7 +24,6 @@ def main():
                       sha256=hashlib.sha256(payload.read_bytes()).hexdigest(), url=payload.as_uri())
         models = {name: dict(revision='fixture', files=[dict(source)]) for name in store.MODELS}
         store.MODELS = models
-        store.EXTRA_HOME = Path(temp) / 'extra'
         application = DesktopApplication([])
         window = App()
         window.show()
@@ -32,7 +31,6 @@ def main():
         def command():
             code = (f'import sys; sys.path.insert(0, {str(core.ROOT)!r}); import model_store as s; '
                     f's.MODELS={models!r}; s.MODEL_HOME=s.Path({str(store.MODEL_HOME)!r}); '
-                    f's.EXTRA_HOME=s.Path({str(store.EXTRA_HOME)!r}); '
                     'from worker import main; sys.exit(main())')
             return [sys.executable, '-u', '-c', code]
 

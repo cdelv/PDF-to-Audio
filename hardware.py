@@ -25,7 +25,7 @@ def gpu_memory():
             capture_output=True, text=True, check=True, timeout=3)
         return float(result.stdout.splitlines()[0]) / 1024
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-        # Flatpak exposes the driver library, but not always nvidia-smi.
+        # The driver library can be available without the nvidia-smi utility.
         try:
             cuda = ctypes.CDLL('nvcuda.dll' if sys.platform == 'win32' else 'libcuda.so.1')
             cuda.cuInit.argtypes = [ctypes.c_uint]

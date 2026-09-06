@@ -10,10 +10,6 @@ on:
         description: Download both default 0.6B models and test offline CPU speech on all three OSes (~4 GB per OS)
         type: boolean
         default: false
-      full_flatpak:
-        description: Build the full CPU Flatpak and install it in a fresh Debian container (large download)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -68,40 +64,3 @@ jobs:
             test-output/appearance/*.png
           if-no-files-found: ignore
           retention-days: 7
-
-  flatpak-hook:
-    name: Linux · Flatpak installation hook
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - name: Install Flatpak and its isolated runtime
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak dbus-x11
-          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user --noninteractive -y flathub org.freedesktop.Sdk//25.08 org.freedesktop.Platform//25.08
-      - name: Test actual install-time downloads and offline discovery with tiny files
-        run: dbus-run-session -- python3 tests/flatpak_download_smoke.py --sdk org.freedesktop.Sdk/x86_64/25.08
-
-  flatpak-full:
-    name: Linux · full Flatpak installation in fresh Debian
-    if: github.event_name == 'workflow_dispatch' && inputs.full_flatpak
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak dbus-x11
-      - name: Build model-free CPU app repository
-        run: dbus-run-session -- python3 tools/build_flatpak.py --cpu
-      - name: Install without host Python, models, or GPU
-        run: |
-          docker build -f packaging/Dockerfile.test -t pdf-to-audio-install-test .
-          docker run --rm --security-opt seccomp=unconfined -v "$PWD/dist:/bundle:ro" -v "$PWD/packaging:/test:ro" pdf-to-audio-install-test

@@ -1,2 +1,0 @@
-#!/bin/sh
-exec /app/share/pdf-to-audio/.venv/bin/python -I /app/share/pdf-to-audio/apply_extra.py
