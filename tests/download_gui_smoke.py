@@ -46,6 +46,15 @@ def main():
                 pump()
             assert window.process is None, window.status.text()
 
+        def wait_for_log(message):
+            deadline = time.monotonic() + 10
+            path = core.DATA / 'conversion.log'
+            while time.monotonic() < deadline:
+                if path.is_file() and message in path.read_text(encoding='utf-8'):
+                    return
+                pump()
+            raise AssertionError(f'Worker diagnostics did not reach the log: {message}')
+
         with patch('app.worker_command', side_effect=command):
             window.setup_models()
             assert window.process and not window.settings_button.isEnabled()
@@ -75,10 +84,11 @@ def main():
             assert window.retry_button.isVisible() and window.retry_button.isEnabled()
             assert 'Retry' in window.status.text()
             models[optional]['files'][0]['url'] = payload.as_uri()
-            code = 'import sys,time; print("Downloading torch (782 MiB)",file=sys.stderr,flush=True); time.sleep(30)'
+            # Deliberately take longer than a single event-loop pump to start.
+            code = 'import sys,time; time.sleep(0.3); print("Downloading torch (782 MiB)",file=sys.stderr,flush=True); time.sleep(30)'
             with patch('app.worker_command', return_value=[sys.executable, '-c', code]):
                 window.retry_button.click()
-                pump()
+                wait_for_log('Downloading torch')
                 window.event(dict(event='download', message='Downloading and installing dependencies…', fraction=None))
                 assert window.progress.maximum() == 0
                 from PySide6.QtWidgets import QPlainTextEdit
