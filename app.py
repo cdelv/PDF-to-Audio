@@ -12,7 +12,7 @@ if __name__ == '__main__' and '--worker' in sys.argv:
     from worker import main as worker_main
     sys.exit(worker_main())
 
-from PySide6.QtCore import QEvent, QIODevice, QObject, QProcess, QProcessEnvironment, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, QProcess, QProcessEnvironment, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QIcon, QPalette
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar,
@@ -320,6 +320,22 @@ class App(QMainWindow):
         output.addWidget(self.output_button)
         output.addWidget(button('Open folder', lambda: self.open_path(self.config['output'])))
         body.addLayout(output)
+        self.setup_panel = QFrame()
+        setup = QVBoxLayout(self.setup_panel)
+        setup.setContentsMargins(0, 8, 0, 8)
+        self.setup_heading = label('Setup — downloading and installing', 'heading')
+        setup.addWidget(self.setup_heading)
+        setup.addWidget(label('Preparing app dependencies and models, not creating audio. Downloads can total several GB. '
+                              'Conversion controls unlock when setup finishes. You can cancel setup or close the window.', 'muted'))
+        self.setup_details = QPlainTextEdit()
+        self.setup_details.setReadOnly(True)
+        self.setup_details.setMaximumBlockCount(120)
+        self.setup_details.setFixedHeight(90)
+        self.setup_details.setPlaceholderText('Connecting to download servers… Download and installation details will appear here.')
+        self.setup_details.setAccessibleName('Download and installation details')
+        setup.addWidget(self.setup_details)
+        self.setup_panel.hide()
+        body.addWidget(self.setup_panel)
         self.progress = QProgressBar()
         self.progress.setRange(0, 1000)
         self.progress.setValue(0)
@@ -556,6 +572,7 @@ class App(QMainWindow):
         self.start_button.setEnabled(not busy and any(not row['audio'] for row in self.rows))
         self.start_button.setText('Resume audio' if any(row['folder'] and not row['audio'] for row in self.rows) else 'Create audio')
         self.cancel_button.setEnabled(busy)
+        self.cancel_button.setText('Cancel setup' if busy and self.job == 'download' else 'Cancel')
         self.retry_button.setEnabled(not busy)
         for row in self.rows:
             row['remove'].setEnabled(not busy)
@@ -576,7 +593,7 @@ class App(QMainWindow):
             names = [self.config['tts']]
             if any(Path(row['path']).suffix.lower() == '.pdf' for row in self.active):
                 names.append(self.config['llm'])
-            if missing_models(names):
+            if missing_models(names) or not runtime_ready(self.config['device']):
                 self.setup_models(names, self.start)
                 return
             for row in self.active:
@@ -599,9 +616,14 @@ class App(QMainWindow):
         self.cancelling = False
         self.stdout_buffer = b''
         self.retry_button.hide()
+        self.setup_panel.setVisible(job == 'download')
+        self.setup_heading.setText('Setup — downloading and installing')
+        self.setup_details.clear()
+        self.timer_label.setVisible(job != 'download')
+        self.progress.setRange(0, 0 if job == 'download' else 1000)
         self.progress.setValue(0)
         self.process = process = QProcess(self)
-        process.setStandardErrorFile(str(DATA / 'conversion.log'), QIODevice.OpenModeFlag.Append)
+        process.readyReadStandardError.connect(self.read_diagnostics)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert('HF_HUB_OFFLINE', '1' if job == 'conversion' else '0')
         environment.insert('TOKENIZERS_PARALLELISM', 'false')
@@ -617,9 +639,24 @@ class App(QMainWindow):
         process.errorOccurred.connect(self.process_error)
         command = worker_command()
         process.start(command[0], command[1:])
-        self.notify('Preparing model download… Internet is needed only to install missing models.' if job == 'download'
+        self.notify('Downloading and installing required app components… Please keep your internet connection active.' if job == 'download'
                     else 'Starting local conversion… First model load can take a little while.')
         self.refresh()
+
+    def read_diagnostics(self):
+        if self.process is None:
+            return
+        data = bytes(self.process.readAllStandardError())
+        if not data:
+            return
+        try:
+            with (DATA / 'conversion.log').open('ab') as log:
+                log.write(data)
+        except OSError:
+            pass  # Keep the window responsive even when a log cannot be written.
+        if self.job == 'download':
+            self.setup_details.insertPlainText(data.decode('utf-8', errors='replace').replace('\r', '\n'))
+            self.setup_details.verticalScrollBar().setValue(self.setup_details.verticalScrollBar().maximum())
 
     def read_worker(self):
         if self.process is None:
@@ -639,7 +676,10 @@ class App(QMainWindow):
             return super().event(event)
         kind = event['event']
         if kind in ('download', 'models_ready'):
-            self.progress.setValue(round(1000 * event.get('fraction', 1)))
+            fraction = event.get('fraction', 1 if kind == 'models_ready' else None)
+            self.progress.setRange(0, 0 if fraction is None else 1000)
+            if fraction is not None:
+                self.progress.setValue(round(1000 * fraction))
             self.notify(event['message'])
             if kind == 'models_ready':
                 self.terminal_event = kind
@@ -674,24 +714,32 @@ class App(QMainWindow):
             self.process = None
             self.stop_clock()
             self.retry_button.setVisible(self.job == 'download')
+            self.setup_heading.setText('Setup could not start')
+            self.progress.setRange(0, 1000)
             self.refresh()
 
     def exited(self, code, _status):
         self.read_worker()
+        self.read_diagnostics()
         process, self.process = self.process, None
         if process:
             process.deleteLater()
         self.stop_clock()
+        self.progress.setRange(0, 1000)
         if self.cancelling:
-            self.notify('Download cancelled. Partial files are kept; Retry resumes setup.' if self.job == 'download'
+            self.notify('Setup cancelled. Installed components and completed model downloads are kept. Retry setup to continue.' if self.job == 'download'
                         else 'Cancelled. Completed passages are kept in the output folder.')
             for row in self.active:
                 if row['fraction'] < 1:
                     row['status'].setText('Cancelled')
         elif self.terminal_event is None:
-            self.notify(f'{"Model download" if self.job == "download" else "Conversion"} stopped (exit {code}). See View log for details.')
+            self.notify(f'{"Setup" if self.job == "download" else "Conversion"} stopped (exit {code}). See View log for details.')
         ready = self.job == 'download' and self.terminal_event == 'models_ready' and code == 0 and not self.cancelling
         self.retry_button.setVisible(self.job == 'download' and not ready)
+        if ready:
+            self.setup_panel.hide()
+        elif self.job == 'download':
+            self.setup_heading.setText('Setup cancelled' if self.cancelling else 'Setup did not finish')
         self.refresh()
         if self.closing:
             self.close()

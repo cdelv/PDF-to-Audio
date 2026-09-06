@@ -78,12 +78,14 @@ def ensure_runtime(kind, emit):
         if python.is_file() and marker.is_file():
             return python
         label = 'CPU + Apple Metal' if sys.platform == 'darwin' else 'CUDA + CPU' if kind == 'cu128' else 'CPU'
-        emit('download', message=f'Installing private {label} runtime… See View log for download progress.', fraction=0)
         uv = ROOT / ('uv.exe' if sys.platform == 'win32' else 'uv')
         if not python.is_file():
+            emit('download', message='Downloading and installing Python for the app…', fraction=None)
             run_child([uv, 'venv', '--managed-python', '--python', '3.12', folder], stdout=sys.stderr)
+        emit('download', message=f'Downloading and installing {label} dependencies… This may download several GB and take several minutes.', fraction=None)
         run_child([uv, 'pip', 'install', '--python', python, '--torch-backend', kind,
                    '-r', ROOT / 'requirements-engine.txt'], stdout=sys.stderr)
+        emit('download', message='Downloads installed. Checking the app dependencies…', fraction=None)
         run_child([uv, 'pip', 'check', '--python', python], stdout=sys.stderr)
         verify = "assert torch.version.cuda == '12.8'" if kind == 'cu128' else 'assert torch.version.cuda is None'
         if sys.platform == 'darwin':
@@ -91,6 +93,7 @@ def ensure_runtime(kind, emit):
         run_child([python, '-I', '-c', 'import torch, torchaudio, qwen_tts; ' + verify],
                   stdout=sys.stderr)
         marker.touch()
+        emit('download', message='App dependencies installed. Preparing the selected models…', fraction=None)
     return python
 
 

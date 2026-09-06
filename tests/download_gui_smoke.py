@@ -49,8 +49,14 @@ def main():
         with patch('app.worker_command', side_effect=command):
             window.setup_models()
             assert window.process and not window.settings_button.isEnabled()
+            assert window.setup_panel.isVisible()
+            assert window.progress.maximum() == 0, 'Setup must animate before a measurable download starts'
+            assert window.cancel_button.text() == 'Cancel setup'
+            assert not window.timer_label.isVisible(), 'Setup must not look like audio conversion'
             finish()
             assert window.terminal_event == 'models_ready', window.status.text()
+            assert not window.setup_panel.isVisible()
+            assert window.progress.maximum() == 1000
             assert not store.missing_models(store.DEFAULT_MODELS)
             assert store.find_model('Qwen/Qwen3-1.7B') is None
             window.settings()
@@ -69,12 +75,25 @@ def main():
             assert window.retry_button.isVisible() and window.retry_button.isEnabled()
             assert 'Retry' in window.status.text()
             models[optional]['files'][0]['url'] = payload.as_uri()
-            with patch('app.worker_command', return_value=[sys.executable, '-c', 'import time; time.sleep(30)']):
+            code = 'import sys,time; print("Downloading torch (782 MiB)",file=sys.stderr,flush=True); time.sleep(30)'
+            with patch('app.worker_command', return_value=[sys.executable, '-c', code]):
                 window.retry_button.click()
                 pump()
-                window.cancel()
+                window.event(dict(event='download', message='Downloading and installing dependencies…', fraction=None))
+                assert window.progress.maximum() == 0
+                assert 'Downloading torch' in window.setup_details.toPlainText()
+                assert 'Downloading torch' in (core.DATA / 'conversion.log').read_text()
+                assert window.cancel_button.isEnabled()
+                snapshot = core.ROOT / 'test-output/appearance/setup.png'
+                snapshot.parent.mkdir(parents=True, exist_ok=True)
+                assert window.grab().save(str(snapshot))
+                window.event(dict(event='download', message='Downloading a model…', fraction=0.25))
+                assert window.progress.maximum() == 1000 and window.progress.value() == 250
+                window.cancel_button.click()
                 finish()
                 assert window.retry_button.isVisible()
+                assert window.progress.maximum() == 1000
+                assert window.setup_heading.text() == 'Setup cancelled'
             window.retry_button.click()
             finish()
             assert window.terminal_event == 'models_ready'
@@ -82,6 +101,13 @@ def main():
             assert store.find_model(optional)
             window.setup_models()
             assert window.process is None, 'Installed models should not start a download worker'
+            with patch('app.runtime_ready', return_value=False), \
+                 patch('app.worker_command', return_value=[sys.executable, '-c', 'import time; time.sleep(30)']):
+                window.setup_models()
+                pump()
+                window.close()
+                finish()
+                assert not window.isVisible(), 'Close must cancel setup and close the window'
         window.close()
         application.quit()
         print('GUI default setup, optional selection, download failure, cancellation, retry, and reuse passed.')
