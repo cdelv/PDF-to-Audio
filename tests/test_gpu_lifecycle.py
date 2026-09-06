@@ -7,10 +7,31 @@ from unittest.mock import patch
 import numpy as np
 
 from hardware import batch_size
-from worker import Cancelled, Cleaner, Speaker, model_options, run_batch, serial_audio_decoder
+from worker import Cancelled, Cleaner, Speaker, model_options, release_gpu, run_batch, serial_audio_decoder
 
 
 class GpuLifecycleTests(unittest.TestCase):
+    def test_metal_selection_dtype_threads_and_cache_release(self):
+        import torch
+        with patch('torch.cuda.is_available', return_value=False), \
+             patch('torch.backends.mps.is_available', return_value=True), \
+             patch('torch.cuda.is_bf16_supported') as cuda_dtype, \
+             patch('torch.set_num_threads') as threads, \
+             patch('torch.mps.empty_cache') as empty:
+            for device in ('auto', 'mps'):
+                options = model_options({'device': device})
+                self.assertEqual(options['device_map'], 'mps')
+                self.assertEqual(options['dtype'], torch.float32)
+            self.assertEqual(threads.call_count, 2)
+            cuda_dtype.assert_not_called()
+            release_gpu()
+            empty.assert_called_once()
+        with patch('torch.cuda.is_available', return_value=False), \
+             patch('torch.backends.mps.is_available', return_value=False):
+            self.assertEqual(model_options({'device': 'auto'})['device_map'], 'cpu')
+            with self.assertRaisesRegex(ValueError, 'Metal is unavailable'):
+                model_options({'device': 'mps'})
+
     def test_all_cpu_threads_are_available_in_cpu_and_gpu_modes(self):
         for device in ('cpu', 'cuda:0', 'auto'):
             for count, expected in ((16, 16), (2, 2), (None, 1)):

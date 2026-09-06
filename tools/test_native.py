@@ -39,6 +39,12 @@ def main():
     run(*prefix, gui, '--gui-smoke', env=env, timeout=60)
     run(helper, '--setup-models', env=env, timeout=3600)
     run(helper, '--self-test', env=env, timeout=1800)
+    if sys.platform != 'darwin':
+        # Hosted runners have no NVIDIA GPU: verify the actual CUDA runtime installs
+        # and imports without a driver. Hardware inference is checked locally.
+        run(helper, '--check-cuda', env=env, timeout=3600)
+    else:
+        run(helper, '--check-metal', env=env, timeout=1800)
 
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-"""Create native CPU preview installers; invoke using the private build runtime."""
+"""Create native installers; inference runtimes and models download during setup."""
 import argparse
 from pathlib import Path
 import platform
@@ -54,7 +54,7 @@ def main():
         shutil.copytree(ROOT / 'dist/PDF-to-Audio', target, dirs_exist_ok=True)
         for directory in ('DEBIAN', 'usr/share/applications', 'usr/share/icons/hicolor/scalable/apps'):
             (package / directory).mkdir(parents=True, exist_ok=True)
-        (package / 'DEBIAN/control').write_text('Package: pdf-to-audio\nVersion: 0.2.0\nArchitecture: amd64\nMaintainer: cdelv\nSection: sound\nPriority: optional\nDepends: libegl1, libopengl0, libdbus-1-3, libxkbcommon-x11-0, libxcb-cursor0\nDescription: Local document narration with voice cloning\n')
+        (package / 'DEBIAN/control').write_text('Package: pdf-to-audio\nVersion: 0.2.0\nArchitecture: amd64\nMaintainer: cdelv\nSection: sound\nPriority: optional\nDepends: libgl1, libegl1, libopengl0, libdbus-1-3, libxkbcommon-x11-0, libxcb-cursor0\nDescription: Local document narration with voice cloning\n')
         (package / 'usr/share/applications/io.github.pdftoaudio.Desktop.desktop').write_text(
             '[Desktop Entry]\nType=Application\nName=PDF to Audio\nExec=/opt/pdf-to-audio/pdf-to-audio %F\nIcon=io.github.pdftoaudio.Desktop\nTerminal=false\nCategories=AudioVideo;Audio;\nStartupWMClass=io.github.pdftoaudio.Desktop\n')
         shutil.copy2(ROOT / 'assets/icon.svg', package / 'usr/share/icons/hicolor/scalable/apps/io.github.pdftoaudio.Desktop.svg')
@@ -69,7 +69,7 @@ Summary: Local document narration with voice cloning
 License: LicenseRef-proprietary
 BuildArch: x86_64
 AutoReqProv: no
-Requires: glibc >= 2.39, libglvnd-egl, libglvnd-opengl, libX11, libxcb, xcb-util-cursor, libxkbcommon-x11, dbus-libs
+Requires: glibc >= 2.39, libglvnd-glx, libglvnd-egl, libglvnd-opengl, libX11, libxcb, xcb-util-cursor, libxkbcommon-x11, dbus-libs
 %description
 Local document narration with downloadable Qwen models.
 %install

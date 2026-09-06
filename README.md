@@ -18,33 +18,20 @@ Documents and voice recordings stay on your computer. The two default **0.6B mod
 
 ## Installation
 
-**One-click installers are not published yet.** For now, use the source-install instructions below with **Python 3.12** and **Git** installed. Dependencies stay in the app's private `.venv`; the first launch downloads any missing default models.
+Download the installer for your desktop below. No Python, Git, or terminal setup is required. Open the app after installing and let setup finish downloading its private runtime and the two default models. Allow several GB of free space for the runtime in addition to the models; CUDA needs more space than CPU.
+
+One installer per OS supports all of the app's backends for that platform: **CPU and NVIDIA CUDA on Linux/Windows; CPU and Apple Metal on macOS**. Automatic mode selects an available GPU. You can also choose the processor in Settings; missing CUDA dependencies download automatically. Setup never modifies system Python or installs host GPU drivers.
 
 ### Linux
 
-Until the native `.deb` and `.rpm` installers are published, open a terminal and run:
+- **Ubuntu 24.04 or newer, x86-64:** download the [DEB installer](https://github.com/cdelv/PDF-to-Audio/releases/download/v0.2.0/PDF-to-Audio-Linux-amd64.deb).
+- **Fedora 44, x86-64:** download the [RPM installer](https://github.com/cdelv/PDF-to-Audio/releases/download/v0.2.0/PDF-to-Audio-Linux-x86_64.rpm).
 
-```sh
-git clone https://github.com/cdelv/PDF-to-Audio.git
-cd PDF-to-Audio
-python3.12 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements-cpu.txt
-.venv/bin/python install.py
-.venv/bin/python app.py
-```
-
-After registration, you can open **PDF to Audio** from the application menu. On Ubuntu, creating the environment may require `sudo apt install python3.12-venv`.
+Open the downloaded package with your software installer, then open **PDF to Audio** from the application menu. GNOME, KDE, and COSMIC use the same app.
 
 #### NVIDIA / CUDA support
 
-CPU mode needs no GPU driver. For NVIDIA acceleration, install a compatible host driver and run this from the app folder:
-
-```sh
-.venv/bin/python -m pip install -r requirements-cuda.txt
-```
-
-You do **not** need the full CUDA Toolkit. The Python dependencies supply the CUDA runtime libraries, but the app cannot install the host's kernel driver.
+CPU mode needs no GPU driver. NVIDIA acceleration needs a host driver compatible with **CUDA 12.8**. The app downloads the CUDA runtime libraries; you do **not** need the full CUDA Toolkit. If your GPU already works with a compatible driver, leave it installed.
 
 **Ubuntu (apt):** install Ubuntu's driver-selection tool, then let it choose the driver for your GPU. See the [Ubuntu driver guide](https://ubuntu.com/server/docs/how-to/graphics/install-nvidia-drivers/).
 
@@ -68,30 +55,14 @@ Save your work before rebooting. Secure Boot may require enrolling a signing key
 
 ### Windows
 
-A native Windows installer is still in development. With Python 3.12 and Git installed, open **PowerShell** and run:
+Download and run the [Windows x64 installer](https://github.com/cdelv/PDF-to-Audio/releases/download/v0.2.0/PDF-to-Audio-Windows-x64-Setup.exe), then open **PDF to Audio** from Start. NVIDIA acceleration requires a compatible NVIDIA driver; CPU mode needs none.
 
-```powershell
-git clone https://github.com/cdelv/PDF-to-Audio.git
-cd PDF-to-Audio
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements-cpu.txt
-.\.venv\Scripts\python.exe app.py
-```
-
-For NVIDIA acceleration, install a current compatible NVIDIA driver and replace `requirements-cpu.txt` with `requirements-cuda.txt` in the installation command. Otherwise, the app uses the CPU.
+The installer is unsigned, so Windows may show a security warning. Verify that you downloaded it from this repository before approving it; do not disable system security.
 
 ### macOS
 
-A native Mac installer is still in development. The current setup has been tested on **Apple Silicon**; Intel Macs are not yet validated. With Python 3.12 and Git installed, open **Terminal** and run:
+Download the [Apple Silicon DMG](https://github.com/cdelv/PDF-to-Audio/releases/download/v0.2.0/PDF-to-Audio-macOS-arm64.dmg), open it, and drag **PDF to Audio** into **Applications**. Intel Macs are not included in this release.
 
-```sh
-git clone https://github.com/cdelv/PDF-to-Audio.git
-cd PDF-to-Audio
-python3.12 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python app.py
-```
+The private PyTorch runtime includes **Apple Metal (MPS)** acceleration, selected automatically when available. No separate GPU driver is needed. Metal inference is not yet validated on a physical Mac; select CPU in Settings if needed.
 
-macOS currently uses CPU narration; Apple GPU acceleration is not yet supported by the app.
+The app is not notarized. macOS may require approval in **System Settings → Privacy & Security** after your first attempt to open it. Only approve the download from this repository; do not disable Gatekeeper globally.

@@ -1,4 +1,4 @@
-name: Build preview installers
+name: Build and publish installers
 on:
   workflow_dispatch:
 permissions:
@@ -42,7 +42,7 @@ jobs:
       - name: Install private build dependencies
         run: |
           python tools/ci_install.py
-          ${{ matrix.python }} -m pip install PyInstaller==6.22.2 Pillow
+          ${{ matrix.python }} -m pip install PyInstaller==6.22.2 Pillow uv==0.12.10
       - name: Build native installer without model weights
         run: |
           ${{ matrix.python }} -m unittest discover -s tests -q
@@ -73,9 +73,9 @@ jobs:
           pattern: installer-*
           path: installers
           merge-multiple: true
-      - name: Publish tested preview installers
+      - name: Publish tested installers
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum installers/* > installers/SHA256SUMS
-          gh release create v0.2.0 installers/* --prerelease --target "$GITHUB_SHA" --title "PDF to Audio 0.2.0 preview" --notes-file packaging/RELEASE_NOTES.md
+          (cd installers && sha256sum * > SHA256SUMS)
+          gh release create v0.2.0 installers/* --target "$GITHUB_SHA" --title "PDF to Audio 0.2.0" --notes-file packaging/RELEASE_NOTES.md

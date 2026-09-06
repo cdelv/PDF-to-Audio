@@ -23,6 +23,9 @@ from checkpoints import atomic_json, digest, open_job, valid_audio
 # Downloads use the separate, pinned HTTP downloader, never Hub inference APIs.
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# PyTorch must see this before its first import. Unsupported Metal operators
+# may run on CPU; supported model operations remain on the Apple GPU.
+os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
 
 
 class Cancelled(BaseException):
@@ -38,18 +41,24 @@ def release_gpu():
     import torch
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
 
 def model_options(config):
     import torch
     device = config.get("device", "auto")
     if device == "auto":
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        device = "cuda:0" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA is unavailable. Select CPU or Automatic in Settings.")
+    if device == 'mps' and not torch.backends.mps.is_available():
+        raise ValueError('Apple Metal is unavailable. Select CPU or Automatic in Settings.')
+    if device not in ('cpu', 'mps') and not device.startswith('cuda'):
+        raise ValueError('Unknown processor. Select CPU, CUDA, Apple Metal, or Automatic in Settings.')
     torch.set_num_threads(os.cpu_count() or 1)
     # Local cache only: document conversion never needs an Internet connection.
-    dtype = torch.float32 if device == "cpu" else (
+    dtype = torch.float32 if device in ("cpu", "mps") else (
         torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
     return dict(device_map=device, dtype=dtype,
                 attn_implementation="sdpa", local_files_only=True)
@@ -380,7 +389,9 @@ def main():
     try:
         request = json.loads(sys.stdin.readline())
         with contextlib.redirect_stdout(sys.stderr):
-            if 'download_models' in request:
+            if request.get('ping'):
+                emit('models_ready', message='Worker connection verified.')
+            elif 'download_models' in request:
                 from model_store import ensure_models
                 ensure_models(request['download_models'], emit)
                 emit('models_ready', message='Models are ready. Narration works offline.')

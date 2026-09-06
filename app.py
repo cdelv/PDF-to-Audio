@@ -22,6 +22,7 @@ from core import APP_ID, DATA, ROOT, RUNTIME, SUPPORTED, LANGUAGES, load_setting
 from hardware import gpu_memory, model_label
 from model_store import DEFAULT_MODELS, missing_models
 from checkpoints import atomic_json
+from runtime_setup import ready as runtime_ready
 
 
 def label(text, name=None):
@@ -130,12 +131,12 @@ class SettingsDialog(QDialog):
         models.addWidget(label('Both 0.6B models are installed by default. Saving a missing 1.7B selection downloads it automatically; models run locally afterwards.', 'muted'))
         self.gpu_status = label('Detecting GPU memory…', 'muted')
         models.addWidget(self.gpu_status)
-        models.addWidget(label('VRAM figures are estimates. Red means the model exceeds your GPU capacity. Automatic uses CPU when a model will not fit. Choose both 0.6B models for a 4 GB card.', 'muted'))
+        models.addWidget(label('VRAM figures are estimates for NVIDIA GPUs. Red means the model exceeds your GPU capacity. Choose both 0.6B models for a 4 GB card; select CPU if you run out of GPU memory.', 'muted'))
         self.fields = {}
         for key, title, choices in (
             ('tts', 'Speech model', ['Qwen/Qwen3-TTS-12Hz-0.6B-Base', 'Qwen/Qwen3-TTS-12Hz-1.7B-Base']),
             ('llm', 'PDF cleanup model', ['Qwen/Qwen3-0.6B', 'Qwen/Qwen3-1.7B']),
-            ('device', 'Processor', ['auto', 'cuda:0', 'cpu']),
+            ('device', 'Processor', ['auto', 'mps', 'cpu'] if sys.platform == 'darwin' else ['auto', 'cuda:0', 'cpu']),
         ):
             models.addWidget(label(title))
             field = QComboBox()
@@ -143,7 +144,8 @@ class SettingsDialog(QDialog):
             if self.config[key] not in choices:
                 choices.append(self.config[key])
             for name in choices:
-                field.addItem(model_label(name, None)[0] if key != 'device' else name, name)
+                field.addItem(model_label(name, None)[0] if key != 'device' else
+                              {'auto': 'Automatic', 'mps': 'Apple Metal (MPS)', 'cuda:0': 'NVIDIA CUDA', 'cpu': 'CPU'}.get(name, name), name)
             field.setCurrentIndex(field.findData(self.config[key]))
             field.setMinimumContentsLength(24)
             field.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -151,7 +153,7 @@ class SettingsDialog(QDialog):
             models.addWidget(field)
             self.fields[key] = field
         if sys.platform == 'darwin':
-            models.addWidget(label('macOS currently uses CPU inference. Apple GPU acceleration is not yet validated.', 'muted'))
+            models.addWidget(label('Automatic uses Apple Metal when available. Unsupported operations can use CPU. Metal inference still needs validation on physical Macs; CPU is always selectable.', 'muted'))
         models.addStretch()
         self.feedback = label('Voice, transcript, and prompt are saved as ordinary files.', 'muted')
         layout.addWidget(self.feedback)
@@ -181,6 +183,7 @@ class SettingsDialog(QDialog):
     def show_gpu(self, capacity):
         self.capacity = capacity
         self.gpu_status.setText(f'Detected GPU: {capacity:.1f} GiB VRAM' if capacity is not None
+            else 'Apple Metal uses shared system memory; availability is checked when a model loads.' if sys.platform == 'darwin'
             else 'NVIDIA GPU unavailable. Automatic can use CPU.')
         for key in ('tts', 'llm'):
             combo = self.fields[key]
@@ -330,7 +333,7 @@ class App(QMainWindow):
         body.addWidget(self.timer_label)
         actions = QHBoxLayout()
         actions.addWidget(button('View log', lambda: self.open_path(DATA / 'conversion.log')))
-        self.retry_button = button('Retry model download', self.retry_download)
+        self.retry_button = button('Retry setup', self.retry_download)
         self.retry_button.hide()
         actions.addWidget(self.retry_button)
         actions.addStretch()
@@ -462,14 +465,14 @@ class App(QMainWindow):
         if self.process:
             return
         needed = missing_models(names)
-        if not needed:
+        if not needed and runtime_ready(self.config['device']):
             self.retry_button.hide()
             if after:
                 after()
             return
         self.download_names, self.after_download = needed, after
         self.active = []
-        self.launch(dict(download_models=needed), 'download')
+        self.launch(dict(download_models=needed, config=self.config), 'download')
 
     def choose_documents(self):
         patterns = ' '.join('*' + ext for ext in sorted(SUPPORTED))
@@ -760,7 +763,7 @@ def main():
     window.add_files([arg for arg in sys.argv[1:] if not arg.startswith('-')])
     window.show()
     if smoke:
-        window.launch(dict(download_models=[]), 'download')
+        window.launch(dict(ping=True), 'download')
         probe = QTimer(application)
 
         def check_helper():

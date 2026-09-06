@@ -1,7 +1,3 @@
 # Shared desktop and inference dependencies for Linux, Windows, and macOS.
 PySide6-Essentials==6.10.2
-qwen-tts==0.1.1
-markitdown[pdf]==0.1.7
-langdetect==1.0.9
-torch==2.11.0
-torchaudio==2.11.0
+-r requirements-engine.txt

@@ -8,6 +8,8 @@ import sys
 from html.parser import HTMLParser
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+if ROOT.name == 'engine' and (ROOT.parent / 'assets').is_dir():
+    ROOT = ROOT.parent  # Plain inference sources inside a native bundle.
 APP_ID = "io.github.pdftoaudio.Desktop"
 RUNTIME = Path(sys.executable) if getattr(sys, 'frozen', False) else ROOT / ('.venv/Scripts/python.exe' if sys.platform == 'win32' else '.venv/bin/python')
 if sys.platform == 'win32':
