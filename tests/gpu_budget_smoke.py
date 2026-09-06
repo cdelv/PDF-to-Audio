@@ -96,7 +96,8 @@ def main():
 
     thread = threading.Thread(target=monitor, daemon=True)
     thread.start()
-    policy = patch('worker.model_batch_size', return_value=1)
+    # A Mock would retain model arguments in its call history and prevent unloading.
+    policy = patch('worker.model_batch_size', new=lambda _model: 1)
     policy.start()  # Simulate the single-item policy of a physical 4 GiB GPU.
     try:
         if args.check_cleanup:
