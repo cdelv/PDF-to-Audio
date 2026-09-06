@@ -53,7 +53,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_runtime_is_private_reused_and_not_marked_ready_on_failure(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(setup, 'DATA', Path(temp)), \
-             patch.object(setup, 'run_child') as run:
+             patch.object(setup, 'run_child') as run, \
+             patch('runtime_downloads.download_dependencies', return_value=Path(temp) / 'local.txt'):
             folder, python = setup.runtime_paths('cpu')
             python.parent.mkdir(parents=True)
             python.touch()
@@ -62,6 +63,7 @@ class RuntimeTests(unittest.TestCase):
                 setup.ensure_runtime('cpu', lambda *_a, **_k: None)
             self.assertFalse((folder / '.ready').exists())
             run.side_effect = None
+            (folder / 'downloads/pylock.toml').touch()
             self.assertEqual(setup.ensure_runtime('cpu', lambda *_a, **_k: None), python)
             self.assertTrue((folder / '.ready').is_file())
             run.reset_mock()

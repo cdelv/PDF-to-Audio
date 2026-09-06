@@ -88,6 +88,7 @@ def main():
                 snapshot.parent.mkdir(parents=True, exist_ok=True)
                 assert window.grab().save(str(snapshot))
                 window.event(dict(event='download', message='Downloading a model…', fraction=0.25))
+                assert window.status.text().startswith('25%')
                 assert window.progress.maximum() == 1000 and window.progress.value() == 250
                 window.cancel_button.click()
                 finish()

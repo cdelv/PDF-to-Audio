@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -82,9 +83,21 @@ def ensure_runtime(kind, emit):
         if not python.is_file():
             emit('download', message='Downloading and installing Python for the app…', fraction=None)
             run_child([uv, 'venv', '--managed-python', '--python', '3.12', folder], stdout=sys.stderr)
-        emit('download', message=f'Downloading and installing {label} dependencies… This may download several GB and take several minutes.', fraction=None)
-        run_child([uv, 'pip', 'install', '--python', python, '--torch-backend', kind,
-                   '-r', ROOT / 'requirements-engine.txt'], stdout=sys.stderr)
+        from runtime_downloads import download_dependencies
+        downloads = folder / 'downloads'
+        downloads.mkdir(exist_ok=True)
+        lock = downloads / 'pylock.toml'
+        if not lock.is_file():
+            emit('download', message=f'Finding {label} downloads… Calculating the download size.', fraction=None)
+            pending = downloads / 'pylock.pending.toml'
+            run_child([uv, 'pip', 'compile', '--python', python, '--torch-backend', kind,
+                       ROOT / 'requirements-engine.txt', '--format', 'pylock.toml',
+                       '-o', pending, '--quiet'], stdout=sys.stderr)
+            pending.replace(lock)
+        requirements = download_dependencies(lock, emit)
+        emit('download', message=f'Downloads complete. Installing {label} dependencies… Small build tools may also download.', fraction=None)
+        run_child([uv, 'pip', 'install', '--python', python, '--no-deps',
+                   '-r', requirements], stdout=sys.stderr)
         emit('download', message='Downloads installed. Checking the app dependencies…', fraction=None)
         run_child([uv, 'pip', 'check', '--python', python], stdout=sys.stderr)
         verify = "assert torch.version.cuda == '12.8'" if kind == 'cu128' else 'assert torch.version.cuda is None'
@@ -93,6 +106,7 @@ def ensure_runtime(kind, emit):
         run_child([python, '-I', '-c', 'import torch, torchaudio, qwen_tts; ' + verify],
                   stdout=sys.stderr)
         marker.touch()
+        shutil.rmtree(downloads)  # Only verified runtime installers, not models or user documents.
         emit('download', message='App dependencies installed. Preparing the selected models…', fraction=None)
     return python
 

@@ -680,7 +680,8 @@ class App(QMainWindow):
             self.progress.setRange(0, 0 if fraction is None else 1000)
             if fraction is not None:
                 self.progress.setValue(round(1000 * fraction))
-            self.notify(event['message'])
+            self.notify(event['message'] if fraction is None or kind == 'models_ready'
+                        else f"{fraction:.0%} — {event['message']}")
             if kind == 'models_ready':
                 self.terminal_event = kind
         elif 'index' in event and 0 <= event['index'] < len(self.active):

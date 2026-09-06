@@ -69,7 +69,10 @@ def download_file(source, target, progress):
             offset = 0
         try:
             if offset < source['size']:
-                request = Request(source['url'], headers={'Range': f'bytes={offset}-'} if offset else {})
+                headers = {'User-Agent': 'PDF-to-Audio/0.2'}
+                if offset:
+                    headers['Range'] = f'bytes={offset}-'
+                request = Request(source['url'], headers=headers)
                 with urlopen(request, timeout=30, context=tls) as response:
                     resumed = offset and response.status == 206
                     if resumed and not response.headers.get('Content-Range', '').startswith(f'bytes {offset}-'):

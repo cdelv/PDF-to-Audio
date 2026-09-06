@@ -16,6 +16,7 @@ def run(*args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--freeze-only', action='store_true')
+    parser.add_argument('--rpm-only', action='store_true', help='Build only the Linux RPM installer')
     args = parser.parse_args()
     if sys.platform in ('darwin', 'win32'):
         from PySide6.QtSvg import QSvgRenderer
@@ -58,13 +59,14 @@ def main():
         (package / 'usr/share/applications/io.github.pdftoaudio.Desktop.desktop').write_text(
             '[Desktop Entry]\nType=Application\nName=PDF to Audio\nExec=/opt/pdf-to-audio/pdf-to-audio %F\nIcon=io.github.pdftoaudio.Desktop\nTerminal=false\nCategories=AudioVideo;Audio;\nStartupWMClass=io.github.pdftoaudio.Desktop\n')
         shutil.copy2(ROOT / 'assets/icon.svg', package / 'usr/share/icons/hicolor/scalable/apps/io.github.pdftoaudio.Desktop.svg')
-        run('dpkg-deb', '--build', '--root-owner-group', package, installers / 'PDF-to-Audio-Linux-amd64.deb')
+        if not args.rpm_only:
+            run('dpkg-deb', '--build', '--root-owner-group', package, installers / 'PDF-to-Audio-Linux-amd64.deb')
         rpm = ROOT / 'build/rpm'
         rpm.mkdir(exist_ok=True)
         spec = rpm / 'package.spec'
         spec.write_text(f'''Name: pdf-to-audio
 Version: 0.2.0
-Release: 1
+Release: 2
 Summary: Local document narration with voice cloning
 License: LicenseRef-proprietary
 BuildArch: x86_64
@@ -83,11 +85,12 @@ cp -a "{package / 'usr/share/icons'}" "%{{buildroot}}/usr/share/"
 /usr/share/icons/hicolor/scalable/apps/io.github.pdftoaudio.Desktop.svg
 ''')
         run('rpmbuild', '-bb', '--define', f'_topdir {rpm}', '--define', '__os_install_post %{nil}', str(spec))
-        for artifact in (rpm / 'RPMS/x86_64').glob('*.rpm'):
-            shutil.copy2(artifact, installers / 'PDF-to-Audio-Linux-x86_64.rpm')
+        shutil.copy2(rpm / 'RPMS/x86_64/pdf-to-audio-0.2.0-2.x86_64.rpm',
+                     installers / 'PDF-to-Audio-Linux-x86_64.rpm')
         # These are generated packaging staging trees, not source or user data.
         shutil.rmtree(package)
-        shutil.rmtree(rpm / 'BUILDROOT')
+        if (rpm / 'BUILDROOT').exists():
+            shutil.rmtree(rpm / 'BUILDROOT')
 
 
 if __name__ == '__main__':
