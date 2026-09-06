@@ -55,6 +55,17 @@ class TextTests(unittest.TestCase):
             self.assertEqual(''.join(chunks), text)
             self.assertTrue(all(len(c) <= 28 for c in chunks))
 
+    def test_next_sentence_moves_whole_to_a_shorter_chunk(self):
+        first = 'The robot ' + 'moves forward ' * 20 + 'steadily.'
+        second = 'The next robot ' + 'turns slowly ' * 32 + 'safely.'
+        text = first + ' ' + second + ' Final sentence.'
+        self.assertGreater(len(first + ' ' + second), core.SPEECH_CHARS)
+        chunks = core.split_text(text, core.SPEECH_CHARS)
+        self.assertEqual(chunks, [first, ' ' + second + ' Final sentence.'])
+        self.assertLess(len(chunks[0]), core.SPEECH_CHARS)
+        self.assertEqual(''.join(chunks), text)
+        self.assertTrue(all(len(chunk) <= core.SPEECH_CHARS for chunk in chunks))
+
     def test_cjk_sentences_without_spaces(self):
         text = '这是第一句话。第二句话没有空格。第三句话也没有空格。' * 100
         chunks = core.split_text(text, 40)
