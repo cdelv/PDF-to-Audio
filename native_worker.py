@@ -16,7 +16,7 @@ def check(inference=False, cuda=False, metal=False, gpu=False):
     from pdf_input import extract_pdf  # noqa: F401
     from core import ROOT, defaults
     from model_store import DEFAULT_MODELS, MODELS, missing_models
-    from worker import Speaker, model_options, release_gpu, run_batch
+    from worker import Cleaner, Speaker, model_options, release_gpu, run_batch
     from hardware import virtual_metal
     assert all((ROOT / 'assets' / name).is_file() for name in ('voice.wav', 'transcript.txt', 'prompt.txt', 'icon.svg'))
     print('Dependencies and assets verified. CUDA:', torch.cuda.is_available(), flush=True)
@@ -50,6 +50,15 @@ def check(inference=False, cuda=False, metal=False, gpu=False):
         config = defaults()
         config.update(device='cuda:0' if gpu else 'mps' if metal else 'cpu', voice=str(ROOT / 'assets/voice.wav'),
                       transcript=str(ROOT / 'assets/transcript.txt'), prompt=str(ROOT / 'assets/prompt.txt'))
+        cleaner = Cleaner(config)
+        try:
+            count = cleaner.batch_size
+            results = cleaner.clean_batch(['Hello. This is a cleanup test.'] * count, 'English')
+            assert len(results) == count and all(text.strip() for text, _ in results)
+            print(f'Offline cleanup batch of {count} passed.', flush=True)
+        finally:
+            cleaner.close()
+            release_gpu()
         import tempfile
         from checkpoints import valid_audio
         with tempfile.TemporaryDirectory(prefix='pdf-to-audio-narration-test-') as directory:

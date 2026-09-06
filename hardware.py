@@ -27,8 +27,8 @@ MODEL_VRAM = {
 
 
 def batch_size(gpu_bytes=None):
-    """Six passages everywhere, except GPUs with less than 4 GiB."""
-    return 1 if gpu_bytes is not None and gpu_bytes < 4 * 2**30 else 6
+    """Six passages everywhere, except GPUs with 4 GiB or less."""
+    return 1 if gpu_bytes is not None and gpu_bytes <= 4 * 2**30 else 6
 
 
 def gpu_memory():

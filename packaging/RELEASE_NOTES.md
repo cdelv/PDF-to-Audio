@@ -2,7 +2,7 @@
 
 Convert PDFs and text documents into local, voice-cloned narration.
 
-- Six-passage speech batches on CPU and GPU; GPUs below 4 GiB use one passage.
+- Six-excerpt cleanup and six-passage speech batches on CPU and GPU; GPUs with 4 GiB of VRAM or less use one at a time.
 - Both models can use all CPU threads, including during GPU inference.
 - Cleanup and speech models run in separate stages and unload between them; audio decoding is sequential to reduce peak VRAM.
 - Elapsed conversion timer, saved queues, and resumable cleanup/audio generation.

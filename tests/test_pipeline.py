@@ -104,7 +104,8 @@ class PipelineTests(unittest.TestCase):
                 '| Platform | Mechanism |\n|---|---|\n' + '| hidden table data | values |\n' * 60
                 + '\nSurrounding prose stays in the narration.')
         cleaner = Cleaner.__new__(Cleaner)
-        cleaner.clean_part = Mock(side_effect=lambda part, _language: core.plain_text(part))
+        cleaner.batch_size = 6
+        cleaner.clean_batch = Mock(side_effect=lambda parts, _language: [(core.plain_text(part), []) for part in parts])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             files = []
@@ -125,9 +126,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(events[-1], dict(event='finished', completed=len(files), failed=0))
             load.assert_called_once()
             extract.assert_called_once_with(root / 'document.pdf')
-            self.assertEqual(cleaner.clean_part.call_count, len(files))
-            for call in cleaner.clean_part.call_args_list:
-                self.assertNotIn('hidden table data', call.args[0])
+            self.assertEqual(cleaner.clean_batch.call_count, len(files))
+            for call in cleaner.clean_batch.call_args_list:
+                self.assertNotIn('hidden table data', ''.join(call.args[0]))
             for event in events:
                 if event['event'] != 'done':
                     continue
@@ -160,6 +161,7 @@ class PipelineTests(unittest.TestCase):
         tokenizer.return_value = BatchEncoding({'input_ids': torch.tensor([[1]])})
         tokenizer.decode.return_value = 'Esta es una historia sobre una biblioteca. Cada libro nos invita a descubrir nuevas ideas y aventuras.'
         cleaner = Cleaner.__new__(Cleaner)
+        cleaner.batch_size = 6
         cleaner.tokenizer = tokenizer
         cleaner.prompt = 'Preserve original language.'
         cleaner.model = SimpleNamespace(device='cpu', config=SimpleNamespace(max_position_embeddings=40960),

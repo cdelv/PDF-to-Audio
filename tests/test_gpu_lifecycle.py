@@ -55,7 +55,8 @@ class GpuLifecycleTests(unittest.TestCase):
     def test_fixed_batch_size_with_only_the_small_gpu_exception(self):
         self.assertEqual(batch_size(), 6)
         self.assertEqual(batch_size(4 * 2**30 - 1), 1)
-        self.assertEqual(batch_size(4 * 2**30), 6)
+        self.assertEqual(batch_size(4 * 2**30), 1)
+        self.assertEqual(batch_size(4 * 2**30 + 1), 6)
         self.assertEqual(batch_size(12 * 2**30), 6)
 
     def test_serial_decoder_preserves_order_without_reference_cycle(self):
@@ -99,6 +100,7 @@ class GpuLifecycleTests(unittest.TestCase):
 
                 class FakeCleaner:
                     warnings = []
+                    batch_size = 6
 
                     def __init__(self, config):
                         events.append('load cleanup')

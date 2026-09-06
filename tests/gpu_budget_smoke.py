@@ -73,13 +73,13 @@ def main():
             loads += 1
             super().__init__(config)
             assert self.model.model.device.type == 'cuda'
-            assert self.batch_size == 6
+            assert self.batch_size == 1
             self.weight_address = next(self.model.model.parameters()).data_ptr()
 
         def speak_batch(self, passages):
             assert next(self.model.model.parameters()).data_ptr() == self.weight_address
             result = super().speak_batch(passages)
-            assert self.batch_size == 6
+            assert self.batch_size == 1
             return result
 
         def speak(self, *args, **kwargs):
@@ -96,6 +96,8 @@ def main():
 
     thread = threading.Thread(target=monitor, daemon=True)
     thread.start()
+    policy = patch('worker.model_batch_size', return_value=1)
+    policy.start()  # Simulate the single-item policy of a physical 4 GiB GPU.
     try:
         if args.check_cleanup:
             cleaner = worker.Cleaner(config)
@@ -111,9 +113,10 @@ def main():
         with patch('worker.Speaker', CheckedSpeaker):
             worker.run_batch(config, files, emit)
     finally:
+        policy.stop()
         stop.set()
         thread.join(timeout=6)
-        report = dict(model=config['tts'], files=files, model_loads=loads, batch_size=6,
+        report = dict(model=config['tts'], files=files, model_loads=loads, batch_size=1,
                       serial_decode=True, cleanup_checked=args.check_cleanup,
                       allocator_limit_MiB=budget / 2**20,
                       peak_allocated_MiB=torch.cuda.max_memory_allocated() / 2**20,

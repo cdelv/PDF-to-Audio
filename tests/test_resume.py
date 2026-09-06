@@ -52,15 +52,17 @@ class ResumeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             checkpoint = Path(temp) / 'cleanup.json'
             cleaner = Cleaner.__new__(Cleaner)
-            cleaner.clean_part = Mock(side_effect=['First output.', Cancelled()])
-            text = 'Complete source sentence. ' * 180
+            cleaner.batch_size = 6
+            cleaner.clean_batch = Mock(side_effect=[[('First output.', [])] * 6, Cancelled()])
+            text = 'Complete source sentence. ' * 650
             with self.assertRaises(Cancelled):
                 cleaner.clean(text, lambda *_: None, 'English', checkpoint)
-            self.assertEqual(len(json.loads(checkpoint.read_text())), 1)
-            cleaner.clean_part = Mock(return_value='Later output.')
+            self.assertEqual(len(json.loads(checkpoint.read_text())), 6)
+            cleaner.clean_batch = Mock(side_effect=lambda parts, _language: [('Later output.', []) for _ in parts])
             result = cleaner.clean(text, lambda *_: None, 'English', checkpoint)
             self.assertTrue(result.startswith('First output.'))
-            self.assertEqual(cleaner.clean_part.call_count, len(json.loads(checkpoint.read_text())) - 1)
+            remaining = len(json.loads(checkpoint.read_text())) - 6
+            self.assertEqual(cleaner.clean_batch.call_count, (remaining + 5) // 6)
 
     def test_memory_errors_do_not_change_the_batch_size(self):
         import torch

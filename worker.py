@@ -66,12 +66,23 @@ def model_options(config):
                 attn_implementation="sdpa", local_files_only=True)
 
 
+def model_batch_size(model):
+    import torch
+    device = model.device
+    memory = (torch.cuda.get_device_properties(device).total_memory if device.type == 'cuda' else
+              torch.mps.recommended_max_memory() if device.type == 'mps' else None)
+    return batch_size(memory)
+
+
 class Cleaner:
     def __init__(self, config):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         path = local_model(config["llm"])
-        self.tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True, padding_side='left')
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModelForCausalLM.from_pretrained(path, **model_options(config))
+        self.batch_size = model_batch_size(self.model)
         self.prompt = Path(config["prompt"]).read_text(encoding="utf-8").strip()
         if not self.prompt:
             raise ValueError("The cleanup prompt is empty. Edit it in Settings.")
@@ -84,23 +95,29 @@ class Cleaner:
         cleaned = []
         self.warnings = []
         saved = json.loads(checkpoint.read_text(encoding='utf-8')) if checkpoint and checkpoint.exists() else []
-        for i, part in enumerate(pieces):
+        reused = 0
+        while reused < min(len(saved), len(pieces)) and saved[reused]['source'] == pieces[reused]:
+            cleaned.append(saved[reused]['text'])
+            self.warnings.extend(saved[reused]['warnings'])
+            reused += 1
+        saved = saved[:reused]
+        for i in range(reused, len(pieces), self.batch_size):
             progress(i, len(pieces))
-            if i < len(saved) and saved[i]['source'] == part:
-                cleaned.append(saved[i]['text'])
-                self.warnings.extend(saved[i]['warnings'])
-                continue
-            saved = saved[:i]
-            start = len(self.warnings)
-            cleaned.append(self.clean_part(part, language))
-            saved.append(dict(source=part, text=cleaned[-1], warnings=self.warnings[start:]))
+            parts = pieces[i:i + self.batch_size]
+            for part, (narration, warnings) in zip(parts, self.clean_batch(parts, language), strict=True):
+                cleaned.append(narration)
+                self.warnings.extend(warnings)
+                saved.append(dict(source=part, text=narration, warnings=warnings))
             if checkpoint:
                 atomic_json(checkpoint, saved)
+            release_gpu()
         return "\n\n".join(cleaned)
 
-    def clean_part(self, part, language, depth=0):
+    def generate_batch(self, parts, language):
+        """Return only CPU data so validation/retries cannot retain GPU tensors."""
         import torch
-        try:
+        chats, languages = [], []
+        for part in parts:
             # A detection hint must never become a translation instruction.
             language_rule = "Keep each passage in its original language. Do not translate prose into a different language."
             source_language = detect_language(part)
@@ -110,45 +127,55 @@ class Cleaner:
                 language_rule += f" The detected source language is {source_language}."
             messages = [{"role": "system", "content": self.prompt + "\n\n" + language_rule},
                         {"role": "user", "content": "Document excerpt:\n<document>\n" + part + "\n</document>"}]
-            chat = self.tokenizer.apply_chat_template(messages, tokenize=False,
-                                                      add_generation_prompt=True, enable_thinking=False)
-            inputs = self.tokenizer(chat, return_tensors="pt").to(self.model.device)
-            input_length = inputs.input_ids.shape[1]
-            budget = min(2048, max(512, len(self.tokenizer.encode(part)) * 2 + 128),
-                         self.model.config.max_position_embeddings - input_length)
-            if budget < 512:
-                raise ValueError("The cleanup prompt and excerpt exceed the model context. Shorten the prompt.")
-            with torch.inference_mode():
-                result = self.model.generate(**inputs, max_new_tokens=budget, do_sample=True,
-                                             temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.05)
-            tokens = result[0, input_length:]
-            eos = self.model.generation_config.eos_token_id
-            eos = eos if isinstance(eos, list) else [eos]
-            if len(tokens) >= budget and int(tokens[-1]) not in eos:
-                raise ValueError("Text cleanup reached its output limit. No truncated narration was accepted.")
-            narration = self.tokenizer.decode(tokens, skip_special_tokens=True).strip()
-            if not narration or "<think>" in narration:
-                raise ValueError("Qwen returned no usable narration. Review the extracted Markdown and prompt.")
-            check_cleanup_language(source_language, narration)
-            # Catch obvious summaries/hallucinations, not stylistic edits. Keep
-            # the original if the small model cannot safely clean an excerpt.
-            source_words = re.findall(r"\w{4,}", part.lower())
-            output_words = re.findall(r"\w{4,}", narration.lower())
-            if len(source_words) > 40 and len(output_words) < len(source_words) * 0.45:
-                raise ValueError("Cleanup omitted too much source text.")
-            if len(output_words) > 20 and sum(w in set(source_words) for w in output_words) < len(output_words) * 0.55:
-                raise ValueError("Cleanup added too much text not present in the source.")
-            return narration
-        except ValueError as error:
-            # Invalid configuration must remain actionable, not trigger retries.
-            if "model context" in str(error):
-                raise
-            if depth < 2 and len(part) > 400:
-                return "\n\n".join(self.clean_part(piece, language, depth + 1)
-                                   for piece in cleanup_chunks(part, max(200, len(part) // 2)))
-            self.warnings.append(f"Original excerpt retained after uncertain cleanup: {error}\nExcerpt: {part[:160].strip()}")
-            repaired = re.sub(r"(?<=\w)-\n(?=\w)", "", part)
-            return plain_text(re.sub(r"(?<!\n)\n(?!\n)", " ", repaired))
+            chats.append(self.tokenizer.apply_chat_template(messages, tokenize=False,
+                         add_generation_prompt=True, enable_thinking=False))
+            languages.append(source_language)
+        inputs = self.tokenizer(chats, padding=True, return_tensors="pt").to(self.model.device)
+        input_length = inputs.input_ids.shape[1]
+        budget = min(2048, max(512, max(len(self.tokenizer.encode(part)) for part in parts) * 2 + 128),
+                     self.model.config.max_position_embeddings - input_length)
+        if budget < 512:
+            raise ValueError("The cleanup prompt and excerpt exceed the model context. Shorten the prompt.")
+        with torch.inference_mode():
+            result = self.model.generate(**inputs, max_new_tokens=budget, do_sample=True,
+                                         temperature=0.7, top_p=0.8, top_k=20, repetition_penalty=1.05)
+        outputs = result[:, input_length:].tolist()
+        eos = self.model.generation_config.eos_token_id
+        eos = eos if isinstance(eos, list) else [eos]
+        return [(self.tokenizer.decode(tokens, skip_special_tokens=True).strip(), source_language,
+                 len(tokens) >= budget and not any(token in eos for token in tokens))
+                for tokens, source_language in zip(outputs, languages, strict=True)]
+
+    def clean_batch(self, parts, language, depth=0):
+        results = []
+        for part, (narration, source_language, capped) in zip(parts, self.generate_batch(parts, language), strict=True):
+            warnings = []
+            try:
+                if capped:
+                    raise ValueError("Text cleanup reached its output limit. No truncated narration was accepted.")
+                if not narration or "<think>" in narration:
+                    raise ValueError("Qwen returned no usable narration. Review the extracted text and prompt.")
+                check_cleanup_language(source_language, narration)
+                # Catch obvious summaries/hallucinations, not stylistic edits.
+                source_words = re.findall(r"\w{4,}", part.lower())
+                output_words = re.findall(r"\w{4,}", narration.lower())
+                if len(source_words) > 40 and len(output_words) < len(source_words) * 0.45:
+                    raise ValueError("Cleanup omitted too much source text.")
+                if len(output_words) > 20 and sum(w in set(source_words) for w in output_words) < len(output_words) * 0.55:
+                    raise ValueError("Cleanup added too much text not present in the source.")
+            except ValueError as error:
+                if depth < 2 and len(part) > 400:
+                    pieces = cleanup_chunks(part, max(200, len(part) // 2))
+                    retried = [item for i in range(0, len(pieces), self.batch_size)
+                               for item in self.clean_batch(pieces[i:i + self.batch_size], language, depth + 1)]
+                    narration = "\n\n".join(text for text, _ in retried)
+                    warnings = [warning for _, notes in retried for warning in notes]
+                else:
+                    warnings.append(f"Original excerpt retained after uncertain cleanup: {error}\nExcerpt: {part[:160].strip()}")
+                    repaired = re.sub(r"(?<=\w)-\n(?=\w)", "", part)
+                    narration = plain_text(re.sub(r"(?<!\n)\n(?!\n)", " ", repaired))
+            results.append((narration, warnings))
+        return results
 
 
 def serial_audio_decoder(tokenizer):
@@ -190,11 +217,7 @@ class Speaker:
         self.prompt = self.model.create_voice_clone_prompt(ref_audio=(audio, rate), ref_text=transcript)
         tokenizer = self.model.model.speech_tokenizer
         tokenizer.decode = serial_audio_decoder(tokenizer)
-        import torch
-        device = self.model.model.device
-        memory = (torch.cuda.get_device_properties(device).total_memory if device.type == 'cuda' else
-                  torch.mps.recommended_max_memory() if device.type == 'mps' else None)
-        self.batch_size = batch_size(memory)
+        self.batch_size = model_batch_size(self.model.model)
         # Qwen infers the reference language from ref_audio/ref_text. It exposes
         # only a target-text language argument, never a separate reference tag.
         # The public audio API discards token counts. Check the underlying result
@@ -301,8 +324,9 @@ def _run_batch(config, files, emit, resume, locks):
                 if cleaner is None:
                     emit("progress", index=index, fraction=0.03, message="Loading Qwen3 text cleanup")
                     cleaner = Cleaner(config)
-                text = cleaner.clean(text, lambda n, total: emit("progress", index=index,
-                    fraction=0.05 + 0.2 * n / total, message=f"Cleaning {language} text · {n+1}/{total}"), language,
+                text = cleaner.clean(text, lambda n, total, size=cleaner.batch_size: emit("progress", index=index,
+                    fraction=0.05 + 0.2 * n / total,
+                    message=f"Cleaning {language} text · {n}/{total} complete · batch of {min(size, total-n)}"), language,
                     checkpoint=folder / 'cleanup.json')
                 if cleaner.warnings:
                     (folder / "warnings.txt").write_text(
