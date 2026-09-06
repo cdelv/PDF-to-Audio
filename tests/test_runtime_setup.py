@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import subprocess
+import sys
 from unittest.mock import patch
 
 import runtime_setup as setup
@@ -9,6 +11,25 @@ from hardware import virtual_metal
 
 
 class RuntimeTests(unittest.TestCase):
+    @unittest.skipIf(sys.platform == 'win32', 'Windows packaged children use a kill-on-close job object.')
+    def test_cancellation_kills_stubborn_child_before_gui_timeout(self):
+        child_code = 'import os,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print(os.getpid(),flush=True); time.sleep(60)'
+        code = f'import sys; from runtime_setup import run_child; run_child([sys.executable, "-c", {child_code!r}])'
+        with subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True) as process:
+            child_pid = int(process.stdout.readline())
+            try:
+                process.terminate()
+                self.assertEqual(process.wait(timeout=5), 143)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child_pid, 0)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    os.kill(child_pid, 9)
+                except ProcessLookupError:
+                    pass
+
     def test_virtual_metal_detection(self):
         from types import SimpleNamespace
         for name, expected in (('Apple Paravirtual device', True), ('Apple M3 Pro', False)):

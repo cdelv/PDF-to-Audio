@@ -52,9 +52,12 @@ def run_child(command, **kwargs):
             else:
                 os.killpg(child.pid, signal.SIGTERM)
             try:
-                child.wait(timeout=10)
+                child.wait(timeout=3)  # Finish before the GUI's five-second kill timer.
             except subprocess.TimeoutExpired:
-                child.kill()
+                if sys.platform == 'win32':
+                    child.kill()
+                else:
+                    os.killpg(child.pid, signal.SIGKILL)
             raise SystemExit(128 + signum)
         previous = {s: signal.signal(s, cancel) for s in (signal.SIGINT, signal.SIGTERM)}
         try:
