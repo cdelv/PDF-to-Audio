@@ -47,8 +47,7 @@ def model_options(config):
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA is unavailable. Select CPU or Automatic in Settings.")
-    if device == 'cpu':
-        torch.set_num_threads(os.cpu_count() or 1)
+    torch.set_num_threads(os.cpu_count() or 1)
     # Local cache only: document conversion never needs an Internet connection.
     dtype = torch.float32 if device == "cpu" else (
         torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)

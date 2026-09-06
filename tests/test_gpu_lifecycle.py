@@ -11,11 +11,16 @@ from worker import Cancelled, Cleaner, Speaker, model_options, run_batch, serial
 
 
 class GpuLifecycleTests(unittest.TestCase):
-    def test_cpu_uses_all_available_threads(self):
-        for count, expected in ((16, 16), (2, 2), (None, 1)):
-            with patch('os.cpu_count', return_value=count), patch('torch.set_num_threads') as setter:
-                self.assertEqual(model_options({'device': 'cpu'})['device_map'], 'cpu')
-                setter.assert_called_once_with(expected)
+    def test_all_cpu_threads_are_available_in_cpu_and_gpu_modes(self):
+        for device in ('cpu', 'cuda:0', 'auto'):
+            for count, expected in ((16, 16), (2, 2), (None, 1)):
+                with self.subTest(device=device, count=count), \
+                     patch('os.cpu_count', return_value=count), patch('torch.set_num_threads') as setter, \
+                     patch('torch.cuda.is_available', return_value=True), \
+                     patch('torch.cuda.is_bf16_supported', return_value=True):
+                    self.assertEqual(model_options({'device': device})['device_map'],
+                                     'cuda:0' if device == 'auto' else device)
+                    setter.assert_called_once_with(expected)
 
     def test_fixed_batch_size_with_only_the_small_gpu_exception(self):
         self.assertEqual(batch_size(), 6)
