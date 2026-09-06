@@ -2,6 +2,20 @@
 import subprocess
 import ctypes
 import sys
+from functools import cache
+
+
+@cache
+def virtual_metal():
+    """Apple's virtual display GPU can advertise MPS but cannot run Qwen reliably."""
+    if sys.platform != 'darwin':
+        return False
+    try:
+        result = subprocess.run(['/usr/sbin/system_profiler', 'SPDisplaysDataType'],
+                                capture_output=True, text=True, check=True, timeout=10)
+        return 'paravirtual' in result.stdout.lower()
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 # Includes weights, short-context generation, and a working-memory margin.
 MODEL_VRAM = {

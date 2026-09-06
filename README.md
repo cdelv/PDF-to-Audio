@@ -63,6 +63,6 @@ The installer is unsigned, so Windows may show a security warning. Verify that y
 
 Download the [Apple Silicon DMG](https://github.com/cdelv/PDF-to-Audio/releases/download/v0.2.0/PDF-to-Audio-macOS-arm64.dmg), open it, and drag **PDF to Audio** into **Applications**. Intel Macs are not included in this release.
 
-The private PyTorch runtime includes **Apple Metal (MPS)** acceleration, selected automatically when available. No separate GPU driver is needed. Metal inference is not yet validated on a physical Mac; select CPU in Settings if needed.
+The private PyTorch runtime includes experimental **Apple Metal (MPS)** acceleration, selected automatically on supported physical GPUs. No separate GPU driver is needed. CPU narration is tested; Metal inference is not yet validated on a physical Mac. Virtual Apple GPUs use CPU because Qwen failed on the test runner's paravirtual GPU. CPU is always selectable in Settings.
 
 The app is not notarized. macOS may require approval in **System Settings → Privacy & Security** after your first attempt to open it. Only approve the download from this repository; do not disable Gatekeeper globally.

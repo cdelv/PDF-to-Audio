@@ -5,9 +5,19 @@ import unittest
 from unittest.mock import patch
 
 import runtime_setup as setup
+from hardware import virtual_metal
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_virtual_metal_detection(self):
+        from types import SimpleNamespace
+        for name, expected in (('Apple Paravirtual device', True), ('Apple M3 Pro', False)):
+            virtual_metal.cache_clear()
+            with patch('hardware.sys.platform', 'darwin'), \
+                 patch('hardware.subprocess.run', return_value=SimpleNamespace(stdout=name)):
+                self.assertEqual(virtual_metal(), expected)
+        virtual_metal.cache_clear()
+
     def test_backend_selection_and_driver_added_later(self):
         for platform in ('linux', 'win32'):
             with patch.object(setup.sys, 'platform', platform), patch.object(setup, 'gpu_memory', return_value=None):

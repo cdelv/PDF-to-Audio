@@ -16,7 +16,8 @@ def check(inference=False, cuda=False, metal=False, gpu=False):
     from pdf_input import extract_pdf  # noqa: F401
     from core import ROOT, defaults
     from model_store import DEFAULT_MODELS, MODELS, missing_models
-    from worker import Cleaner, Speaker, release_gpu
+    from worker import Cleaner, Speaker, model_options, release_gpu
+    from hardware import virtual_metal
     assert all((ROOT / 'assets' / name).is_file() for name in ('voice.wav', 'transcript.txt', 'prompt.txt', 'icon.svg'))
     print('Dependencies and assets verified. CUDA:', torch.cuda.is_available(), flush=True)
     if cuda:
@@ -26,9 +27,20 @@ def check(inference=False, cuda=False, metal=False, gpu=False):
         inference = True
     if metal:
         assert torch.backends.mps.is_built(), 'macOS runtime must include Metal support.'
+        if virtual_metal():
+            assert model_options({'device': 'auto'})['device_map'] == 'cpu'
+            try:
+                model_options({'device': 'mps'})
+            except ValueError as error:
+                assert 'virtual Apple GPU' in str(error)
+            else:
+                raise AssertionError('Virtual Metal must be rejected before loading weights.')
+            print('Metal runtime and virtual-GPU CPU selection verified. Metal inference SKIPPED: unsupported Apple Paravirtual GPU; physical Mac required.', flush=True)
+            return
         if not torch.backends.mps.is_available():
             print('Metal runtime verified; hardware inference SKIPPED: this runner exposes no MPS device.', flush=True)
             return
+        print(f'Metal recommended working memory: {torch.mps.recommended_max_memory() / 2**30:.2f} GiB', flush=True)
         inference = True
     if inference:
         assert not missing_models(DEFAULT_MODELS)

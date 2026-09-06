@@ -20,7 +20,7 @@ Then open PDF to Audio and let its setup download its private runtime and the tw
 
 The same Linux/Windows installer supports **CPU and NVIDIA CUDA 12.8**. Setup detects an available NVIDIA driver and downloads CUDA dependencies; choosing CUDA in Settings also installs them if missing. Installing a driver later does not require reinstalling the app. CPU mode works without GPU drivers. A compatible host NVIDIA driver is required for GPU acceleration and is not installed by the app.
 
-The Apple Silicon installer includes **CPU and Apple Metal (PyTorch MPS)** support. Automatic mode selects Metal when available, using float32 and CPU fallback for unsupported operators. Both models release their GPU caches between stages. Metal hardware inference is not yet validated on a physical Mac; CPU remains selectable in Settings. AMD and Intel GPU acceleration on Linux/Windows is not supported.
+The Apple Silicon installer includes **CPU and experimental Apple Metal (PyTorch MPS)** support. Automatic mode selects Metal on supported physical GPUs, using float32 and CPU fallback for unsupported operators. Both models release their GPU caches between stages. CPU narration is tested; Metal hardware inference is not yet validated on a physical Mac. Qwen failed on the hosted runner's Apple Paravirtual GPU, so virtual GPUs now use CPU and explicit Metal selection reports a clear error. AMD and Intel GPU acceleration on Linux/Windows is not supported.
 
 Windows/macOS files are unsigned and macOS is not notarized, so the OS may display a security warning or require explicit approval through its security settings. Do not disable system security globally.
 

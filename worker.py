@@ -16,7 +16,7 @@ import weakref
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from core import SUPPORTED, cleanup_chunks, omit_tables, plain_text, speech_plan
 from languages import check_cleanup_language, detect_language, resolve_language
-from hardware import batch_size
+from hardware import batch_size, virtual_metal
 from model_store import local_model
 from checkpoints import atomic_json, digest, open_job, valid_audio
 
@@ -49,11 +49,13 @@ def model_options(config):
     import torch
     device = config.get("device", "auto")
     if device == "auto":
-        device = "cuda:0" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        device = "cuda:0" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() and not virtual_metal() else "cpu"
     if device.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA is unavailable. Select CPU or Automatic in Settings.")
     if device == 'mps' and not torch.backends.mps.is_available():
         raise ValueError('Apple Metal is unavailable. Select CPU or Automatic in Settings.')
+    if device == 'mps' and virtual_metal():
+        raise ValueError('The virtual Apple GPU cannot run Qwen reliably. Select CPU or use a physical Mac for Metal.')
     if device not in ('cpu', 'mps') and not device.startswith('cuda'):
         raise ValueError('Unknown processor. Select CPU, CUDA, Apple Metal, or Automatic in Settings.')
     torch.set_num_threads(os.cpu_count() or 1)
@@ -190,7 +192,9 @@ class Speaker:
         tokenizer.decode = serial_audio_decoder(tokenizer)
         import torch
         device = self.model.model.device
-        self.batch_size = batch_size(torch.cuda.get_device_properties(device).total_memory if device.type == 'cuda' else None)
+        memory = (torch.cuda.get_device_properties(device).total_memory if device.type == 'cuda' else
+                  torch.mps.recommended_max_memory() if device.type == 'mps' else None)
+        self.batch_size = batch_size(memory)
         # Qwen infers the reference language from ref_audio/ref_text. It exposes
         # only a target-text language argument, never a separate reference tag.
         # The public audio API discards token counts. Check the underlying result

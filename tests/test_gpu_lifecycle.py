@@ -15,6 +15,7 @@ class GpuLifecycleTests(unittest.TestCase):
         import torch
         with patch('torch.cuda.is_available', return_value=False), \
              patch('torch.backends.mps.is_available', return_value=True), \
+             patch('worker.virtual_metal', return_value=False), \
              patch('torch.cuda.is_bf16_supported') as cuda_dtype, \
              patch('torch.set_num_threads') as threads, \
              patch('torch.mps.empty_cache') as empty:
@@ -30,6 +31,14 @@ class GpuLifecycleTests(unittest.TestCase):
              patch('torch.backends.mps.is_available', return_value=False):
             self.assertEqual(model_options({'device': 'auto'})['device_map'], 'cpu')
             with self.assertRaisesRegex(ValueError, 'Metal is unavailable'):
+                model_options({'device': 'mps'})
+
+    def test_virtual_metal_uses_cpu_and_rejects_explicit_mps(self):
+        with patch('torch.cuda.is_available', return_value=False), \
+             patch('torch.backends.mps.is_available', return_value=True), \
+             patch('worker.virtual_metal', return_value=True):
+            self.assertEqual(model_options({'device': 'auto'})['device_map'], 'cpu')
+            with self.assertRaisesRegex(ValueError, 'virtual Apple GPU'):
                 model_options({'device': 'mps'})
 
     def test_all_cpu_threads_are_available_in_cpu_and_gpu_modes(self):
